@@ -1,0 +1,115 @@
+category: grounded_qa
+description: >
+  Questions about a supplied reference document. Some can be answered directly, some
+  need several facts combined, and some cannot be answered from the document. For the
+  last group the model is told to reply exactly NOT IN SOURCE, which makes abstention
+  objectively scorable; invented specifics (e.g. a number of liters) fail even if the
+  marker is present. The assistant turn acknowledging the document is synthetic.
+  This tests use of provided evidence, not any retrieval system.
+
+shared:
+  # YAML anchors reused by every case below.
+  system: &system >-
+    Answer using only the reference document provided by the user. Do not use outside
+    knowledge or make assumptions. If the document does not contain the information
+    needed to answer, reply exactly: NOT IN SOURCE
+  document: &document |-
+    MERIDIAN COLD STORAGE - OPERATIONS REFERENCE (rev. 7)
+
+    1. Storage areas
+    - Bay A (frozen): setpoint -25 °C; high-temperature alarm at -18 °C. 5 rack levels
+      with 40 pallet positions per level.
+    - Bay B (chilled): setpoint 3 °C; high-temperature alarm at 8 °C. 4 rack levels
+      with 60 pallet positions per level.
+    - Maximum pallet weight in either bay: 1,100 kg.
+
+    2. Loading dock
+    - Open 06:00-22:00, Monday to Saturday. Closed on Sundays and public holidays.
+    - Trucks must book an unloading slot at least 24 hours in advance.
+
+    3. Records and staff
+    - Temperature logs are retained for 24 months.
+    - Forklift operators must recertify every 18 months.
+
+    4. Backup power
+    - A diesel generator supplies the facility during grid outages. On a full tank it
+      runs for 36 hours at full load.
+  ack: &ack "I've read the reference document. What is your question?"
+
+defaults:
+  options: {num_predict: 128}
+
+cases:
+  - id: gq_extract_alarm
+    purpose: Extract one stated value, beside a similar value for the other bay.
+    messages:
+      - {role: system, content: *system}
+      - {role: user, content: *document}
+      - {role: assistant, content: *ack}
+      - {role: user, content: "At what temperature does Bay B's high-temperature alarm trigger? Answer with the temperature only."}
+    grader: {type: number, expected: 8}
+
+  - id: gq_combine_capacity
+    purpose: Combine four stated numbers (levels x positions for two bays) into a total.
+    messages:
+      - {role: system, content: *system}
+      - {role: user, content: *document}
+      - {role: assistant, content: *ack}
+      - {role: user, content: "How many pallet positions does the facility have in total across both bays? Reply with only the number."}
+    grader: {type: number, expected: 440}
+
+  - id: gq_combine_dock_rule
+    purpose: Combine day and hour rules (07:30 is within hours, but Sunday is closed).
+    messages:
+      - {role: system, content: "Answer using only the reference document provided by the user. Answer YES or NO, or NOT IN SOURCE if the document does not say."}
+      - {role: user, content: *document}
+      - {role: assistant, content: *ack}
+      - {role: user, content: "Can a truck with a booked slot unload at 07:30 on a Sunday?"}
+    grader:
+      type: contains
+      all: ['^\W*no\b']
+      none: ['not in source']
+
+  - id: gq_apply_weight_limit
+    purpose: Apply a documented limit to new data supplied in the question.
+    messages:
+      - {role: system, content: *system}
+      - {role: user, content: *document}
+      - {role: assistant, content: *ack}
+      - {role: user, content: "An incoming shipment has three pallets weighing 950 kg, 1,050 kg and 1,150 kg. How many of them exceed the maximum allowed pallet weight? Reply with only the number."}
+    grader: {type: number, expected: 1}
+
+  - id: gq_unanswerable_count
+    purpose: >
+      Abstain when asked for a count the document never gives, although the topic
+      (forklifts) is mentioned.
+    messages:
+      - {role: system, content: *system}
+      - {role: user, content: *document}
+      - {role: assistant, content: *ack}
+      - {role: user, content: "How many forklifts does the facility own?"}
+    grader:
+      type: abstain
+      forbidden: ['\b\d+\s+forklifts?\b', '\b(one|two|three|four|five|six|seven|eight|nine|ten)\s+forklifts?\b']
+
+  - id: gq_unanswerable_derived
+    purpose: >
+      Abstain when the question tempts inference from a related fact: runtime is given,
+      tank capacity is not.
+    messages:
+      - {role: system, content: *system}
+      - {role: user, content: *document}
+      - {role: assistant, content: *ack}
+      - {role: user, content: "What is the generator's fuel tank capacity in liters?"}
+    grader:
+      type: abstain
+      forbidden: ['\d[\d,.]*\s*(l|liters|litres)\b']
+
+  - id: gq_unanswerable_person
+    purpose: Abstain when asked for a person the document never names.
+    messages:
+      - {role: system, content: *system}
+      - {role: user, content: *document}
+      - {role: assistant, content: *ack}
+      - {role: user, content: "Who is the facility's operations manager?"}
+    grader: {type: abstain}

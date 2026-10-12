@@ -1,0 +1,104 @@
+category: multi_turn
+description: >
+  A scripted multi-turn conversation followed by a question that requires combining
+  several earlier facts. All earlier turns, including the assistant messages, are
+  SYNTHETIC: written by hand and sent as history in a single request. This measures
+  how well the model reasons over supplied history. It says nothing about whether a
+  chatbot application stores, retrieves, or summarizes history across sessions.
+
+defaults:
+  options: {num_predict: 128}
+
+cases:
+  - id: mt_trip_total
+    purpose: >
+      Sum costs stated across several turns (per-person, per-night and per-day prices)
+      and leave out an option the user decided to skip.
+    messages:
+      - {role: user, content: "I'm planning a team offsite in Porto. Flights are €420 per person and there are 3 of us."}
+      - {role: assistant, content: "Got it: three travelers at €420 each for flights."}
+      - {role: user, content: "For lodging we picked one shared apartment at €150 per night, for 4 nights."}
+      - {role: assistant, content: "Noted: one apartment, €150 per night, 4 nights."}
+      - {role: user, content: "Someone suggested a boat tour at €35 per person, but we decided to skip it."}
+      - {role: assistant, content: "Okay, no boat tour."}
+      - {role: user, content: "We'll rent one car at €55 per day for the same 4 days."}
+      - {role: assistant, content: "Car rental noted: €55 per day for 4 days."}
+      - {role: user, content: "What is the total cost of flights, lodging and the car together? Reply with only the number of euros."}
+    grader: {type: number, expected: 2080}
+
+  - id: mt_meeting_day
+    purpose: >
+      Intersect availability constraints introduced one per turn to find the single
+      day that satisfies all of them.
+    messages:
+      - {role: user, content: "I need a day next week (Monday to Friday) for a 2-hour design review with Priya, Marcus and Elena."}
+      - {role: assistant, content: "Happy to help. What are everyone's constraints?"}
+      - {role: user, content: "Priya is on leave Monday and Friday."}
+      - {role: assistant, content: "Priya can't attend on Monday or Friday."}
+      - {role: user, content: "Marcus has a full-day workshop on Tuesday."}
+      - {role: assistant, content: "Marcus is unavailable Tuesday."}
+      - {role: user, content: "Elena is free every day, but the only room big enough is booked all day Wednesday."}
+      - {role: assistant, content: "Noted: the room is unavailable Wednesday."}
+      - {role: user, content: "Which day works? Answer with only the day name."}
+    grader:
+      type: regex_extract
+      pattern: '\b(?:monday|tuesday|wednesday|thursday|friday)\b'
+      expected: thursday
+
+  - id: mt_connection_url
+    purpose: >
+      Assemble a connection string from five settings given in different turns,
+      including a port chosen because the default was taken.
+    messages:
+      - {role: user, content: "We're setting up the reporting service's database. It'll be PostgreSQL."}
+      - {role: assistant, content: "OK, PostgreSQL."}
+      - {role: user, content: "The service account will be called reporter."}
+      - {role: assistant, content: "Account name: reporter."}
+      - {role: user, content: "Port 5432 is already used on that host by the legacy instance, so the new one will listen on 6543."}
+      - {role: assistant, content: "The new instance will use port 6543."}
+      - {role: user, content: "The database is analytics_v2 and the host is db-reporting.internal."}
+      - {role: assistant, content: "Noted the database name and host."}
+      - {role: user, content: "Write the connection URL in the form postgresql://USER@HOST:PORT/DATABASE. Reply with only the URL."}
+    grader:
+      type: exact
+      expected: postgresql://reporter@db-reporting.internal:6543/analytics_v2
+
+  - id: mt_task_order
+    purpose: >
+      Derive the unique order of four tasks from pairwise dependencies stated in
+      separate turns.
+    messages:
+      - {role: user, content: "Our release has four tasks: publish, sign, build, and test."}
+      - {role: assistant, content: "Understood. Are there ordering constraints?"}
+      - {role: user, content: "Signing must happen after testing passes."}
+      - {role: assistant, content: "Sign comes after test."}
+      - {role: user, content: "Testing needs the build artifacts."}
+      - {role: assistant, content: "Test comes after build."}
+      - {role: user, content: "Publish is always the final step."}
+      - {role: assistant, content: "Publish goes last."}
+      - {role: user, content: "List the four tasks in the order they must run, comma-separated, nothing else."}
+    grader:
+      type: contains
+      all: ['^\W*build\W+test\W+sign\W+publish\W*$']
+
+  - id: mt_multiple_responsibilities
+    purpose: >
+      Aggregate assignments spread across turns and report who holds more than one,
+      without including people with a single responsibility.
+    messages:
+      - {role: user, content: "Let's split the migration work. Lena takes the frontend changes."}
+      - {role: assistant, content: "Lena: frontend changes."}
+      - {role: user, content: "Omar takes the backend API changes."}
+      - {role: assistant, content: "Omar: backend API changes."}
+      - {role: user, content: "Ji-woo will handle on-call during migration week."}
+      - {role: assistant, content: "Ji-woo: on-call."}
+      - {role: user, content: "The database migrations go to Omar as well, since he knows the schema."}
+      - {role: assistant, content: "Omar also owns the database migrations."}
+      - {role: user, content: "And Lena will update the user documentation."}
+      - {role: assistant, content: "Lena also owns the user documentation."}
+      - {role: user, content: "Who has more than one responsibility? Reply with only the names, comma-separated."}
+    grader:
+      type: regex_extract
+      pattern: '\b(?:Lena|Omar|Ji-woo)\b'
+      expected: [Lena, Omar]
+      extra: fail
