@@ -10,7 +10,8 @@ env:
 prompts:
   # Every test supplies its chat history in vars.messages: a YAML list in most
   # scenarios, a JSON string from the long_context generator. The provider parses it.
-  - '{% if messages is string %}{{ messages }}{% else %}{{ messages | dump }}{% endif %}'
+  - label: chat history (vars.messages)
+    raw: '{% if messages is string %}{{ messages }}{% else %}{{ messages | dump }}{% endif %}'
 
 providers:
   - id: file://helpers/ollama_provider.py
