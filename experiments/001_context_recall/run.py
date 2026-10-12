@@ -2,7 +2,10 @@
 """One reproducible, local Ollama context-recall experiment.
 
 No third-party Python packages, Open WebUI, or Internet access required.
-Usage: python3 context_recall_test.py [--ctx 16384] [--notes 90]
+Usage: uv run python experiments/001_context_recall/run.py [--ctx 16384] [--notes 90]
+
+The reusable version of this test lives in the evaluation suite (long_context category,
+llm_eval/generators.py); this script is kept as the original, self-contained experiment.
 """
 
 import argparse
@@ -17,6 +20,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 API_URL = "http://127.0.0.1:11434/api/chat"
+DEFAULT_OUTPUT = Path(__file__).resolve().parents[2] / "results" / "001_context_recall" / "context_results.jsonl"
 PROJECTS = ("Cedar", "Atlas", "Nimbus", "Willow", "Keystone", "Harbor", "Summit", "Orchid")
 COMPONENTS = ("scheduler", "telemetry", "indexer", "build pipeline", "dashboard", "storage layer")
 CONCERNS = ("latency", "observability", "documentation", "integration", "rollout", "testing")
@@ -72,7 +76,7 @@ def main():
     parser.add_argument("--notes", type=int, default=90, help="Number of distracting meeting notes")
     parser.add_argument("--position", choices=("early", "middle", "late"), default="early")
     parser.add_argument("--seed", type=int, default=2026)
-    parser.add_argument("--output", type=Path, default=Path("context_results.jsonl"))
+    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     args = parser.parse_args()
     if args.notes < 8 or args.ctx < 1024:
         parser.error("--notes must be >= 8 and --ctx must be >= 1024")
@@ -107,6 +111,20 @@ def main():
     passed = (found_codes == [expected])
     prompt_tokens = result.get("prompt_eval_count")
     near_limit = (prompt_tokens is not None and prompt_tokens >= args.ctx - 256)
+    # Ollama timing fields are in nanoseconds. Missing values remain null in JSONL.
+    def seconds(field):
+        value = result.get(field)
+        return round(value / 1e9, 3) if isinstance(value, (int, float)) else None
+
+    total_seconds = seconds("total_duration")
+    load_seconds = seconds("load_duration")
+    prompt_seconds = seconds("prompt_eval_duration")
+    decode_seconds = seconds("eval_duration")
+    output_tokens = result.get("eval_count")
+    prompt_tps = (round(prompt_tokens / prompt_seconds, 1)
+                  if prompt_tokens is not None and prompt_seconds and prompt_seconds > 0 else None)
+    decode_tps = (round(output_tokens / decode_seconds, 1)
+                  if output_tokens is not None and decode_seconds and decode_seconds > 0 else None)
     record = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "model": args.model,
@@ -120,10 +138,14 @@ def main():
         "answer": answer,
         "passed_exact_code": passed,
         "prompt_tokens_reported": prompt_tokens,
-        "response_tokens_reported": result.get("eval_count"),
+        "response_tokens_reported": output_tokens,
         "wall_seconds": round(elapsed, 2),
-        "model_total_seconds": round(result.get("total_duration", 0) / 1e9, 2),
-        "model_load_seconds": round(result.get("load_duration", 0) / 1e9, 2),
+        "model_total_seconds": total_seconds,
+        "model_load_seconds": load_seconds,
+        "prompt_eval_seconds": prompt_seconds,
+        "decode_seconds": decode_seconds,
+        "prompt_tokens_per_second": prompt_tps,
+        "decode_tokens_per_second": decode_tps,
         "possible_context_truncation": near_limit,
         "done_reason": result.get("done_reason"),
     }
@@ -135,7 +157,12 @@ def main():
     print(f"Answer:   {answer!r}")
     print(f"Recall:   {'PASS' if passed else 'FAIL'}")
     print(f"Prompt tokens processed (Ollama): {prompt_tokens}")
-    print(f"Elapsed wall time: {elapsed:.1f}s | output tokens: {result.get('eval_count')}")
+    print(f"Elapsed wall time: {elapsed:.1f}s | output tokens: {output_tokens}")
+    print("Ollama timing breakdown (seconds):")
+    print(f"  Load:              {load_seconds}")
+    print(f"  Prompt processing: {prompt_seconds} ({prompt_tps} input tokens/s)")
+    print(f"  Answer generation: {decode_seconds} ({decode_tps} output tokens/s)")
+    print(f"  Total:             {total_seconds}")
     if near_limit:
         print("WARNING: Prompt token count is near the context cap. Input may have been truncated;")
         print("         don't interpret a recall failure as an attention failure without inspecting this.")
