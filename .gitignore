@@ -5,5 +5,7 @@ results/*
 !results/.gitkeep
 # historical results cited by experiment 001
 !results/001_context_recall/
+# the reference baseline run (README: Results)
+!results/baseline/
 node_modules/
 .pytest_cache/

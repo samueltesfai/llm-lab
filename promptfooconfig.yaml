@@ -1,5 +1,6 @@
-# Model-level evaluation of a local Ollama model: 41 cases, ~1 minute warm on an
-# RTX 5070 Ti. Run with `npm run eval`; per-run settings via EVAL_* variables (README).
+# Model-level evaluation of a local Ollama model: 41 cases, about a minute once the
+# model is loaded on a 16 GB GPU. Run with `npm run eval`; per-run settings via
+# EVAL_* variables (README).
 description: Model-level evaluation of a local Ollama model
 
 env:

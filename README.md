@@ -6,12 +6,13 @@ inference costs in time and memory on consumer hardware.
 
 ## Environment
 
-- OS: Fedora Linux
-- GPU: NVIDIA RTX 5070 Ti (16 GB VRAM)
-- Runtime: Ollama
-- Initial model: Qwen3.5-9B (`qwen3.5:9b`)
+- Runtime: [Ollama](https://ollama.com/) on Linux, with a GPU that has enough memory for
+  the model under test
+- Default model: Qwen3.5-9B (`qwen3.5:9b`)
 - Evaluation framework: [promptfoo](https://www.promptfoo.dev/) (Node.js, pinned in `package.json`)
 - Python managed with `uv` (`pyproject.toml`, `uv.lock`), for evaluation helpers only
+
+The hardware isn't fixed here, because each run records its own (see [Results](#results)).
 
 ## Two evaluation layers
 
@@ -41,7 +42,7 @@ helpers/                 Python only where promptfoo has no built-in equivalent
   summary.py             per-category console summary, timings, exit status
 tests/                   tests of the helpers (mocked Ollama; no server needed)
 experiments/             standalone experiments
-results/                 run reports (git-ignored)
+results/                 run reports (git-ignored, except baseline/ and 001_context_recall/)
 ```
 
 promptfoo handles test loading, filtering, repetition, built-in assertions
@@ -129,16 +130,39 @@ included: `results/runs/<UTC timestamp>.json`. It contains:
 - one entry per test: id, category and purpose, the prompt, the answer, every
   assertion's verdict and reason, and provider metadata: timings, effective Ollama
   options, Ollama version, model digest, quantization, and any thinking trace
+- the hardware, in each entry's provider metadata:
+  - the machine's GPUs (name, memory, driver) via `nvidia-smi`, recorded as
+    unavailable without it; this describes the machine running the suite, which is
+    the Ollama server only when Ollama runs locally
+  - where Ollama placed the model (`warmup.placement`): its size, how much sits in
+    GPU memory, and the context actually allocated. A partly CPU-offloaded model is
+    much slower, and timings alone wouldn't show it.
 - run-level statistics
 
 promptfoo also keeps an index of runs in `results/promptfoo/` for `npm run view`.
-`results/` is git-ignored; `git add -f` the reports you want versioned. Results of
-the original context-recall experiment are in `results/001_context_recall/`.
+`results/` is git-ignored, with two exceptions:
+
+- **`results/baseline/`** holds one versioned reference run, so a fresh checkout has
+  an example of the expected output and a fixed point of comparison.
+  `2026-10-12_qwen3.5-9b_ctx32768.json` is the full suite on `qwen3.5:9b` (Q4_K_M, digest
+  `56671c2ab938`) with Ollama 0.40.3, the default settings, and seed 2026: 35 of 41
+  passed. Its hardware is recorded in the report; `npm run summary` shows it. Timings
+  from other hardware aren't comparable with it; pass/fail results usually are. All six failures are genuine model errors:
+  - two wrong sums (`mt_trip_total`, `gq_combine_capacity`)
+  - a tie broken in the wrong order (`if_csv_sorted_exact`)
+  - two wrong program traces (`pg_trace_*`)
+  - a code answer that rambled past its 2,048-token budget (`pg_write_parse_duration`)
+
+  Replace it deliberately when the suite or the reference model changes, not after
+  every run.
+- **`results/001_context_recall/`** holds the original context-recall experiment's
+  results.
 
 Compare runs:
 
 ```bash
-npm run summary -- results/runs/20261012-220517.json            # one run in detail
+npm run summary -- results/baseline/*.json                      # the reference run in detail
+npm run summary -- results/baseline/*.json results/runs/<new>.json   # a new run beside it
 npm run summary -- results/runs/*.json                          # one row per run
 ```
 
@@ -195,7 +219,7 @@ The provider records, per test (`response.metadata.metrics` in the report):
   prompt reported 4,960 cached tokens and 0.03 s. Reuse is partial and model-dependent:
   a shared 4,950-token prefix gave 4,452 cached tokens, since qwen3.5 reuses in ~512-token
   steps. A few fresh tokens after a long cached prefix also process slower per token
-  than a cold prompt (~3,800 vs ~5,000 tok/s here). So prompt throughput is reported
+  than a cold prompt (~3,800 vs ~5,000 tok/s on the baseline run's hardware). So prompt throughput is reported
   only for requests with nothing cached, and as unavailable when Ollama omits the
   cached count (older versions). With `--repeat` at temperature 0, later repeats are
   mostly cached.
