@@ -41,8 +41,9 @@ def test_timeout():
     assert outcome.status == "fail" and "timed out" in outcome.detail
 
 
-def test_syntax_error_is_reported():
-    assert sandbox.run_function_tests("def f(:\n", "f", [{"args": [], "expected": 1}]).status == "review"
+def test_syntax_error_is_a_failure():
+    outcome = sandbox.run_function_tests("def f(:\n", "f", [{"args": [], "expected": 1}])
+    assert outcome.status == "fail" and "does not parse" in outcome.detail
 
 
 def test_extract_code_prefers_block_defining_function():

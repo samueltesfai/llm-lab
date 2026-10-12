@@ -6,7 +6,8 @@ determined adversary:
 1. Static policy: the code is parsed (never exec'd in this process). Only a short
    allowlist of pure standard-library modules may be imported, and file/introspection
    builtins (open, eval, exec, __import__, getattr, ...) and dunder attribute access
-   are rejected. Rejected code is graded `review`, not `fail`.
+   are rejected. Rejected code is graded `review`, not `fail` (code that doesn't
+   parse at all is a `fail`).
 2. A separate interpreter in isolated mode (-I), in a throwaway temporary directory,
    with an empty environment and stdin closed.
 3. Resource limits: CPU seconds, address space, file size, open files, no new
@@ -99,11 +100,7 @@ def extract_code(answer: str, function: str) -> str | None:
     return None
 
 
-def policy_violations(code: str) -> list[str]:
-    try:
-        tree = ast.parse(code)
-    except SyntaxError as exc:
-        return [f"syntax error: {exc.msg} (line {exc.lineno})"]
+def policy_violations(tree: ast.AST) -> list[str]:
     problems = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -145,7 +142,11 @@ def _limit_resources(cpu_seconds: int):
 
 
 def run_function_tests(code: str, function: str, tests: list[dict], timeout: float = 10) -> SandboxOutcome:
-    problems = policy_violations(code)
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as exc:   # objectively wrong, unlike policy rejections below
+        return SandboxOutcome("fail", f"code does not parse: {exc.msg} (line {exc.lineno})")
+    problems = policy_violations(tree)
     if problems:
         return SandboxOutcome("review", "code not executed (sandbox policy): " + "; ".join(problems[:5]))
     isolation = network_isolation_prefix()

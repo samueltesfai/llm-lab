@@ -177,13 +177,15 @@ def grade_abstain(answer: str, spec: dict) -> GradeResult:
 def _grading_result(result: GradeResult, context: dict) -> dict:
     passed = result.status == "pass"
     reason = result.detail or result.status
-    if result.status in ("review", "error"):
-        reason = f"{result.status.upper()}: {reason}"
-    # The provider only lets a cut-off answer through for tests declaring `cutoff: fail`;
-    # say so, since the grader's own reason (e.g. a syntax error) wouldn't explain it.
+    # The provider only lets a cut-off answer through for tests declaring `cutoff: fail`,
+    # where running out of budget is itself the failure: lead with that, and don't
+    # call it "review" just because the truncated answer couldn't be judged.
     metrics = ((context.get("providerResponse") or {}).get("metadata") or {}).get("metrics") or {}
-    if not passed and metrics.get("done_reason") == "length":   # appended: keeps the ERROR:/REVIEW: prefix
-        reason = f"{reason} [answer cut off at {metrics.get('output_tokens')} tokens; cutoff: fail]"
+    cut_off = not passed and metrics.get("done_reason") == "length"
+    if cut_off and result.status != "error":
+        reason = f"answer cut off at {metrics.get('output_tokens')} tokens before finishing (cutoff: fail); {reason}"
+    elif result.status in ("review", "error"):
+        reason = f"{result.status.upper()}: {reason}"
     return {"pass": passed, "score": 1.0 if passed else 0.0, "reason": reason}
 
 

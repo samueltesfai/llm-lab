@@ -90,8 +90,14 @@ def print_one(s: dict):
         total.update(counts)
         print(f"  {category:<24}" + "".join(f"{counts[x]:>9}" for x in STATUSES))
     print(f"  {'TOTAL':<24}" + "".join(f"{total[x]:>9}" for x in STATUSES))
+    reviews = [p for p in s["problems"] if p[0] == "fail" and p[2].startswith("REVIEW: ")]
+    if reviews:
+        print(f"  ({len(reviews)} of the failures may be acceptable and need a human look: marked REVIEW)")
     for status, test_id, reason in s["problems"]:
-        print(f"  {status.upper():<8}{test_id}: {reason}")
+        label = status.upper()
+        if status == "fail" and reason.startswith("REVIEW: "):
+            label, reason = "REVIEW", reason[len("REVIEW: "):]
+        print(f"  {label:<8}{test_id}: {reason}")
     print(f"  timing: warm-up load {s['warmup_load_s']}s, total wall {s['wall_total']}s, median decode "
           f"{s['decode_tps']} tok/s, median prompt {s['prompt_tps']} tok/s (requests with nothing cached)")
     if s["cold_loads"]:

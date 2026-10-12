@@ -120,9 +120,12 @@ class TestPromptfooEntryPoints:
     def test_cut_off_answer_is_explained(self):
         context = {"config": {"expected": 1},
                    "providerResponse": {"metadata": {"metrics": {"done_reason": "length", "output_tokens": 2048}}}}
-        assert "cut off at 2048 tokens" in assertions.number("no", context)["reason"]
+        assert assertions.number("no", context)["reason"].startswith("answer cut off at 2048 tokens")
+        # a cut-off answer that can't be judged is a failure under cutoff: fail, not review
         reason = assertions.choice("unclear", {**context, "config": {"expected": "C"}})["reason"]
-        assert reason.startswith("REVIEW:") and "cut off" in reason
+        assert reason.startswith("answer cut off") and "REVIEW" not in reason
+        # an assertion config error stays an error even when the answer was cut off
+        assert assertions.number("no", {**context, "config": {}})["reason"].startswith("ERROR:")
 
     def test_long_context_answer_regenerates_expected(self):
         import long_context

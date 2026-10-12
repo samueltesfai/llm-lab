@@ -55,3 +55,12 @@ def test_main_prints_comparison_for_several_files(tmp_path, capsys):
     assert summary.main([str(first), str(second)]) == 0
     out = capsys.readouterr().out
     assert "1/1" in out and "0/1" in out
+
+
+def test_review_results_are_labelled(tmp_path, capsys):
+    r = row("a", "x", success=False, failure_reason=1, reason="REVIEW: abstained without the required marker",
+            metrics=METRICS)
+    assert summary.main([str(write(tmp_path, [r]))]) == 1
+    out = capsys.readouterr().out
+    assert "REVIEW  a: abstained without the required marker" in out
+    assert "1 of the failures may be acceptable" in out

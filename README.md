@@ -145,7 +145,7 @@ npm run summary -- results/runs/*.json                          # one row per ru
 | Status | Meaning |
 |---|---|
 | pass | Meets the test's acceptance criteria. |
-| fail | Objectively wrong: wrong value, invalid JSON, schema violation, failed hidden tests, invented detail. A reason starting `REVIEW:` means "possibly acceptable, but no simple rule can decide" (e.g. the right value alongside other candidates, or an abstention without the agreed marker). Inspect those. |
+| fail | Objectively wrong: wrong value, invalid JSON, schema violation, failed hidden tests, invented detail. Some failures are marked **REVIEW** in the summary (reason `REVIEW:` in promptfoo): "possibly acceptable, but no simple rule can decide", e.g. the right value alongside other candidates, or an abstention without the agreed marker. They count as failures until you inspect them. |
 | invalid | Says nothing about the model: the prompt didn't fit `num_ctx`, looks truncated, or the answer was cut off by `num_predict`. promptfoo shows these as errors; the summary separates them. |
 | error | Infrastructure, not the model: the request failed (unreachable server, missing model, timeout, HTTP error), the configuration is malformed, or a check couldn't run (broken assertion config, sandbox unavailable). |
 
@@ -353,8 +353,10 @@ be brittle. Each is called as
 | `long_context_answer` | Generated long-context tests. | none; it reads `vars.generator` and `vars.params` |
 
 **How a project assertion reports its result:**
-- **Review** shows up as a failure whose reason starts with `REVIEW:`. It means the
-  answer may be acceptable but a rule can't decide; read it yourself.
+- **Review** counts as a failure, marked `REVIEW` in the summary (its promptfoo
+  reason starts with `REVIEW:`). It means the answer may be acceptable but a rule
+  can't decide; read it yourself. A test with `cutoff: fail` whose answer ran out of
+  budget is a plain failure, never review: running out of budget is the failure.
 - **Error** means a broken `config` (e.g. a missing `expected`). It shows up with a
   reason starting `ERROR:`, and the summary counts it as an error, never as a model
   failure.
@@ -389,7 +391,8 @@ safeguards in `helpers/sandbox.py`:
 
 1. **Static policy.** The code is parsed first. Only pure standard-library modules may
    be imported, and file, eval, and introspection builtins and dunder attributes are
-   rejected. Rejected code is graded `REVIEW:`, never run.
+   rejected. Rejected code is never run and is graded review. Code that doesn't parse
+   at all is a failure.
 2. **Separate process.** It runs in a `python -I` process in a temporary directory,
    with an empty environment.
 3. **Resource limits.** CPU, 1 GiB memory, file size, open files, no new processes,
