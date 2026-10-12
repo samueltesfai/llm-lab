@@ -22,9 +22,11 @@ inference costs in time and memory on consumer hardware.
    an actual chatbot (e.g. Open WebUI) manage history, retrieval, persistent memory,
    and the overall user experience?
 
-The suite establishes a baseline for the first layer, so that differences observed
-later at the application layer can be attributed to the application rather than to
-the model or its settings.
+The suite establishes a model-level baseline that helps distinguish model limitations
+from application-level behavior when investigating failures in the complete chatbot.
+It can't attribute differences on its own: an application may use different prompts,
+system instructions, inference settings, retrieved documents, or conversation
+formatting, and the same model can behave quite differently with those inputs.
 
 ## Layout
 
