@@ -31,6 +31,10 @@ class FakeClient:
     def list_models(self):
         return [{"name": m, "digest": "abc123", "details": {"parameter_size": "1B"}} for m in self.models]
 
+    def running(self):
+        return [{"name": m, "size": 4_000_000_000, "size_vram": 3_000_000_000, "context_length": 8192}
+                for m in self.models]
+
     def chat(self, model, messages, options, *, think=False, keep_alive="5m", truncate=False):
         self.calls.append({"messages": messages, "options": options, "think": think, "truncate": truncate})
         result = self.answer(messages, options)

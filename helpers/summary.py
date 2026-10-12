@@ -69,7 +69,20 @@ def summarize(path: Path) -> dict:
         "wall_total": round(sum(m["wall_s"] for m in metrics), 1),
         "cold_loads": sum(bool(m["cold_load"]) for m in metrics),
         "warmup_load_s": (meta.get("warmup") or {}).get("load_s"),
+        "placement": (meta.get("warmup") or {}).get("placement"),
     }
+
+
+def _hardware(s: dict) -> str:
+    gpus = s["server"].get("gpus")
+    text = (", ".join(f"{g['name']} ({g['memory_mib']} MiB, driver {g['driver']})" for g in gpus)
+            if gpus else "GPU unavailable (no nvidia-smi)")
+    placement = s["placement"]
+    if placement and placement.get("size_bytes"):
+        share = (placement.get("size_vram_bytes") or 0) / placement["size_bytes"]
+        text += (f"; model {placement['size_bytes'] / 1e9:.1f} GB, {share:.0%} in GPU memory, "
+                 f"context allocated {placement.get('context_length')}")
+    return text
 
 
 def exit_status(summary: dict) -> int:
@@ -98,6 +111,7 @@ def print_one(s: dict):
         if status == "fail" and reason.startswith("REVIEW: "):
             label, reason = "REVIEW", reason[len("REVIEW: "):]
         print(f"  {label:<8}{test_id}: {reason}")
+    print(f"  hardware: {_hardware(s)}")
     print(f"  timing: warm-up load {s['warmup_load_s']}s, total wall {s['wall_total']}s, median decode "
           f"{s['decode_tps']} tok/s, median prompt {s['prompt_tps']} tok/s (requests with nothing cached)")
     if s["cold_loads"]:

@@ -64,3 +64,14 @@ def test_review_results_are_labelled(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "REVIEW  a: abstained without the required marker" in out
     assert "1 of the failures may be acceptable" in out
+
+
+def test_hardware_line(tmp_path, capsys):
+    r = row("a", "x", metrics=METRICS)
+    r["response"]["metadata"]["server"] = {"gpus": [{"name": "Test GPU", "memory_mib": 1024, "driver": "1"}]}
+    r["response"]["metadata"]["warmup"] = {"placement": {"size_bytes": 4e9, "size_vram_bytes": 3e9, "context_length": 8192}}
+    summary.main([str(write(tmp_path, [r]))])
+    assert "hardware: Test GPU (1024 MiB, driver 1); model 4.0 GB, 75% in GPU memory, context allocated 8192" in capsys.readouterr().out
+    r["response"]["metadata"]["server"] = {"gpus": None}
+    summary.main([str(write(tmp_path, [r], "2.json"))])
+    assert "GPU unavailable" in capsys.readouterr().out

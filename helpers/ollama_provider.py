@@ -6,7 +6,8 @@ result from a model failure. This provider returns:
 
   output      the answer text (any thinking trace goes to metadata, not the output)
   tokenUsage  prompt / completion tokens; KV-cache hits under completionDetails
-  metadata    timing metrics, effective Ollama options, server and model identity
+  metadata    timing metrics, effective Ollama options, server and model identity,
+              the machine's GPU, and where Ollama placed the model
   error       for results that say nothing about the model, all prefixed "INVALID:"
               (Ollama rejected the prompt as too long, the prompt looks truncated,
               or the answer was cut off) or "ERROR:" (unreachable, timeout, HTTP).
@@ -20,7 +21,9 @@ the shell, so neither can express "default, unless set for this run".)
 
 import json
 import os
+import shutil
 import socket
+import subprocess
 import time
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -157,6 +160,9 @@ class OllamaClient:
     def list_models(self) -> list[dict]:
         return self._request("/api/tags", timeout=10).get("models", [])
 
+    def running(self) -> list[dict]:
+        return self._request("/api/ps", timeout=10).get("models", [])
+
     def chat(self, model: str, messages: list[dict], options: dict, *, think=False,
              keep_alive: str = "5m", truncate: bool = False) -> tuple[dict, float]:
         """Returns (Ollama's response body, client-observed wall seconds)."""
@@ -265,14 +271,39 @@ _server: dict = {}
 
 def _warm_up(client: OllamaClient, s: dict) -> dict:
     """Load the model with the run's num_ctx (a different num_ctx forces a reload) so
-    test timings start warm; its own metrics are recorded on every row."""
+    test timings start warm. Records the warm-up's own metrics and, from /api/ps, where
+    Ollama placed the model: a model partly offloaded to CPU runs much slower, which
+    timings alone wouldn't reveal."""
     key = (client.host, s["model"], s["num_ctx"])
     if key not in _warmed:
-        _warmed[key] = extract_metrics(*client.chat(
+        metrics = extract_metrics(*client.chat(
             s["model"], [{"role": "user", "content": "Reply with OK."}],
             {"num_ctx": s["num_ctx"], "num_predict": 4, "temperature": 0},
             keep_alive=s["keep_alive"], truncate=True))
+        loaded = next((m for m in client.running() if m.get("name") in (s["model"], s["model"] + ":latest")), {})
+        metrics["placement"] = {"size_bytes": loaded.get("size"), "size_vram_bytes": loaded.get("size_vram"),
+                                "context_length": loaded.get("context_length")} if loaded else None
+        _warmed[key] = metrics
     return _warmed[key]
+
+
+def gpu_info() -> list[dict] | None:
+    """The machine's NVIDIA GPUs via nvidia-smi (Ollama's API doesn't report the GPU).
+    None when nvidia-smi is absent or fails: unavailable, not "no GPU"."""
+    executable = shutil.which("nvidia-smi")
+    if not executable:
+        return None
+    try:
+        out = subprocess.run([executable, "--query-gpu=name,memory.total,driver_version",
+                              "--format=csv,noheader,nounits"],
+                             capture_output=True, text=True, timeout=10, check=True).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    gpus = []
+    for line in out.strip().splitlines():
+        name, memory_mib, driver = (part.strip() for part in line.split(","))
+        gpus.append({"name": name, "memory_mib": int(memory_mib), "driver": driver})
+    return gpus or None
 
 
 def _server_info(client: OllamaClient, model: str) -> dict:
@@ -285,7 +316,10 @@ def _server_info(client: OllamaClient, model: str) -> dict:
         details = entry.get("details") or {}
         _server[key] = {"ollama_version": client.version(), "model_digest": entry.get("digest"),
                         "parameter_size": details.get("parameter_size"),
-                        "quantization": details.get("quantization_level")}
+                        "quantization": details.get("quantization_level"),
+                        # nvidia-smi describes this machine, i.e. the server only when
+                        # Ollama runs locally (the default host)
+                        "gpus": gpu_info()}
     return _server[key]
 
 

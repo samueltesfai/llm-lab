@@ -114,6 +114,7 @@ def provider(monkeypatch):
     """Install a FakeClient; returns a function running call_api with given answer/metadata."""
     for variable in ollama_provider.ENV_OVERRIDES:
         monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setattr(ollama_provider, "gpu_info", lambda: [{"name": "Test GPU", "memory_mib": 1024, "driver": "1"}])
     monkeypatch.delenv("EVAL_SEED", raising=False)
 
     def call(answer, *, metadata=None, config=None, messages=None, repeat=0, models=("fake:latest",)):
@@ -219,3 +220,27 @@ def test_malformed_prompt_is_actionable(provider, monkeypatch):
     for prompt in ("plain text, not JSON", "[]", '[{"role": "user"}]', '{"role": "user", "content": "x"}'):
         result = ollama_provider.call_api(prompt, {"config": {}}, {})
         assert result["error"].startswith("ERROR [config]: the prompt is not a JSON chat history"), prompt
+
+
+def test_hardware_and_placement_recorded(provider):
+    result, _ = provider(lambda m, o: response("42"))
+    meta = result["metadata"]
+    assert meta["server"]["gpus"] == [{"name": "Test GPU", "memory_mib": 1024, "driver": "1"}]
+    assert meta["warmup"]["placement"] == {"size_bytes": 4_000_000_000, "size_vram_bytes": 3_000_000_000,
+                                           "context_length": 8192}
+
+
+def test_gpu_info(monkeypatch):
+    class Done:
+        stdout = "NVIDIA GeForce RTX 5070 Ti, 16303, 615.71.09\n"
+    monkeypatch.setattr(ollama_provider.shutil, "which", lambda name: "/usr/bin/nvidia-smi")
+    monkeypatch.setattr(ollama_provider.subprocess, "run", lambda *a, **k: Done())
+    assert ollama_provider.gpu_info() == [{"name": "NVIDIA GeForce RTX 5070 Ti", "memory_mib": 16303,
+                                           "driver": "615.71.09"}]
+
+    def fails(*a, **k):
+        raise ollama_provider.subprocess.CalledProcessError(9, "nvidia-smi")
+    monkeypatch.setattr(ollama_provider.subprocess, "run", fails)
+    assert ollama_provider.gpu_info() is None
+    monkeypatch.setattr(ollama_provider.shutil, "which", lambda name: None)
+    assert ollama_provider.gpu_info() is None
