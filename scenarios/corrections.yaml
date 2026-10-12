@@ -1,15 +1,13 @@
-category: corrections
-description: >
-  A value is stated, then corrected, superseded, or only tentatively questioned. The
-  final question asks for the current authoritative value, or deliberately for the
-  historical one. All history is synthetic and supplied in one request.
+# corrections: a value is stated, then corrected, superseded, or only tentatively
+# questioned. The final question asks for the current authoritative value, or
+# deliberately for the historical one. All history is synthetic, sent in one request.
 
-defaults:
-  options: {num_predict: 96}
-
-cases:
-  - id: cr_meeting_rescheduled
+- description: cr_meeting_rescheduled
+  metadata:
+    category: corrections
     purpose: Report the corrected meeting time, not the original, after an explicit correction.
+    num_predict: 96
+  vars:
     messages:
       - {role: user, content: "The quarterly planning meeting is on Tuesday at 10:00."}
       - {role: assistant, content: "Noted: Tuesday at 10:00."}
@@ -18,13 +16,18 @@ cases:
       - {role: user, content: "Correction: the planning meeting has moved to Wednesday at 14:00. The Tuesday slot is cancelled."}
       - {role: assistant, content: "Updated: Wednesday at 14:00."}
       - {role: user, content: "When is the planning meeting now? Answer with only the day and time."}
-    grader:
-      type: contains
-      all: ['wednesday', '14[:.]00|\b2(:00)?\s*p\.?m']
-      none: ['tuesday', '10[:.]00']
+  assert:
+    - {type: icontains, value: wednesday}
+    - {type: javascript, value: '/14[:.]00|\b2(:00)?\s*p\.?m/i.test(output)'}
+    - {type: not-icontains, value: tuesday}
+    - {type: not-regex, value: '10[:.]00'}
 
-  - id: cr_value_superseded_twice
+- description: cr_value_superseded_twice
+  metadata:
+    category: corrections
     purpose: Track a value revised twice (100, then 250, then 200) and return the final one.
+    num_predict: 96
+  vars:
     messages:
       - {role: user, content: "For the public API, the rate limit is 100 requests per minute per key."}
       - {role: assistant, content: "Rate limit: 100 requests per minute per key."}
@@ -33,13 +36,15 @@ cases:
       - {role: user, content: "The load test showed the database struggling at 250. Final decision: the limit is 200 requests per minute."}
       - {role: assistant, content: "Final limit: 200 requests per minute."}
       - {role: user, content: "What is the current rate limit in requests per minute? Reply with only the number."}
-    grader: {type: number, expected: 200}
+  assert:
+    - {type: python, value: file://helpers/assertions.py:number, config: {expected: 200}}
 
-  - id: cr_historical_value
-    purpose: >
-      Same history as cr_value_superseded_twice, but ask for the original value. This
-      checks the model distinguishes historical from current information, not just
-      "latest wins".
+- description: cr_historical_value
+  metadata:
+    category: corrections
+    purpose: Same history as cr_value_superseded_twice, but ask for the original value - historical vs current, not just "latest wins".
+    num_predict: 96
+  vars:
     messages:
       - {role: user, content: "For the public API, the rate limit is 100 requests per minute per key."}
       - {role: assistant, content: "Rate limit: 100 requests per minute per key."}
@@ -48,25 +53,32 @@ cases:
       - {role: user, content: "The load test showed the database struggling at 250. Final decision: the limit is 200 requests per minute."}
       - {role: assistant, content: "Final limit: 200 requests per minute."}
       - {role: user, content: "What was the rate limit originally, before any changes? Reply with only the number."}
-    grader: {type: number, expected: 100}
+  assert:
+    - {type: python, value: file://helpers/assertions.py:number, config: {expected: 100}}
 
-  - id: cr_partial_correction
-    purpose: >
-      Apply a correction to one field (the postal code) while keeping the rest of the
-      record intact.
+- description: cr_partial_correction
+  metadata:
+    category: corrections
+    purpose: Apply a correction to one field (the postal code) while keeping the rest of the record intact.
+    num_predict: 96
+  vars:
     messages:
       - {role: user, content: "Please ship the replacement part to: Dana Whitfield, 12 Elm Street, Springfield, postal code 40211."}
       - {role: assistant, content: "Shipping address recorded."}
       - {role: user, content: "Sorry, small correction: the postal code is 40221. The rest of the address is right."}
       - {role: assistant, content: "Postal code updated to 40221."}
       - {role: user, content: "Read back the complete shipping address as a single line."}
-    grader:
-      type: contains
-      all: ['Dana Whitfield', '12 Elm (Street|St\b)', 'Springfield', '40221']
-      none: ['40211']
+  assert:
+    - {type: icontains-all, value: [Dana Whitfield, Springfield, '40221']}
+    - {type: javascript, value: '/12 Elm (Street|St\b)/i.test(output)'}
+    - {type: not-contains, value: '40211'}
 
-  - id: cr_rejected_proposal
+- description: cr_rejected_proposal
+  metadata:
+    category: corrections
     purpose: A proposed change that was explicitly rejected must not be reported as current.
+    num_predict: 96
+  vars:
     messages:
       - {role: user, content: "Our order service stores its data in PostgreSQL."}
       - {role: assistant, content: "Noted: the order service uses PostgreSQL."}
@@ -75,37 +87,39 @@ cases:
       - {role: user, content: "We reviewed the proposal today and rejected it. We're staying on PostgreSQL."}
       - {role: assistant, content: "Noted: staying on PostgreSQL."}
       - {role: user, content: "Which database will the order service use going forward? Answer with only the database name."}
-    grader:
-      type: contains
-      all: ['postgres']
-      none: ['mysql']
+  assert:
+    - {type: icontains, value: postgres}
+    - {type: not-icontains, value: mysql}
 
-  - id: cr_tentative_not_adopted
-    purpose: >
-      A floated, undecided change is not a correction; the original value remains
-      authoritative.
+- description: cr_tentative_not_adopted
+  metadata:
+    category: corrections
+    purpose: A floated, undecided change is not a correction; the original value remains authoritative.
+    num_predict: 96
+  vars:
     messages:
       - {role: user, content: "The client project deadline is May 16."}
       - {role: assistant, content: "Deadline recorded: May 16."}
       - {role: user, content: "Kai wondered whether we could push it to May 30, but nothing has been decided and the client hasn't agreed."}
       - {role: assistant, content: "Understood; May 30 was only floated."}
       - {role: user, content: "What is the current deadline? Answer with only the date."}
-    grader:
-      type: contains
-      all: ['may\W*16|16\W*may|05[-/]16']
-      none: ['30']
+  assert:
+    - {type: javascript, value: '/may\W*16|16\W*may|05[-\/]16/i.test(output)'}
+    - {type: not-contains, value: '30'}
 
-  - id: cr_swap_assignments
-    purpose: >
-      A correction that swaps two people's assignments; the question concerns one of
-      the swapped items.
+- description: cr_swap_assignments
+  metadata:
+    category: corrections
+    purpose: A correction that swaps two people's assignments; the question concerns one of the swapped items.
+    num_predict: 96
+  vars:
     messages:
       - {role: user, content: "Release assignments: Hana owns QA, Felix owns the release notes, and Ines owns the rollback plan."}
       - {role: assistant, content: "Noted all three assignments."}
       - {role: user, content: "Correction: Felix and Ines need to swap. Felix takes the rollback plan and Ines takes the release notes."}
       - {role: assistant, content: "Updated the assignments."}
       - {role: user, content: "Who owns the release notes now? Reply with only the name."}
-    grader:
-      type: regex_extract
-      pattern: '\b(?:Hana|Felix|Ines)\b'
-      expected: Ines
+  assert:
+    - type: python
+      value: file://helpers/assertions.py:regex_extract
+      config: {pattern: '\b(?:Hana|Felix|Ines)\b', expected: Ines}

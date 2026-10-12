@@ -1,19 +1,21 @@
-"""Deterministic input generators for scenarios too long to write out by hand.
+"""Deterministic long chat histories for the long_context scenarios.
 
-A scenario selects a generator by name and passes parameters, e.g.
+scenarios/long_context.yaml names a generator and its parameters per test, and
+loads the history through promptfoo's Python variable loader:
 
-    generator: {name: meeting_notes, params: {notes: 32, position: middle}}
+    vars:
+      generator: meeting_notes
+      params: {notes: 40, position: middle}
+      messages: file://helpers/long_context.py
 
-Every generator takes an integer seed and returns a Generated object: the chat
-messages, values to merge into the case's grader spec (typically the expected
-answer, which is randomized), and metadata recorded with the result.
-
-The suite derives the seed from the run's --seed and the case id, so the same
-command always produces byte-identical prompts.
+The expected answer (a code or IP address) is random per seed, so it can't have been
+memorized; assertions.py:long_context_answer regenerates it from the same vars. The
+seed combines EVAL_SEED (default 2026) with the generator and parameters, so the same
+settings always produce byte-identical prompts. meeting_notes is adapted from
+experiments/001_context_recall and reproduces its prompts exactly for equal seeds.
 """
 
-from __future__ import annotations
-
+import json
 import random
 import zlib
 from dataclasses import dataclass, field
@@ -27,9 +29,10 @@ class Generated:
     metadata: dict = field(default_factory=dict)
 
 
-def case_seed(base_seed: int, case_id: str) -> int:
-    """Stable per-case seed (Python's hash() is salted per process, crc32 is not)."""
-    return zlib.crc32(f"{case_id}:{base_seed}".encode("utf-8"))
+def case_seed(base_seed: int, generator: str, params: dict) -> int:
+    """Stable seed per generator configuration (Python's hash() is salted per process)."""
+    key = f"{generator}:{json.dumps(params, sort_keys=True)}:{base_seed}"
+    return zlib.crc32(key.encode("utf-8"))
 
 
 def _insert_index(count: int, position) -> int:
@@ -202,7 +205,26 @@ def server_inventory(seed: int, rows: int = 100, position="middle") -> Generated
     )
 
 
-GENERATORS: dict[str, Callable[..., Generated]] = {
-    "meeting_notes": meeting_notes,
-    "server_inventory": server_inventory,
+# name: (function, regex that extracts candidate answers from the model's output)
+GENERATORS: dict[str, tuple[Callable[..., Generated], str]] = {
+    "meeting_notes": (meeting_notes, r"MARIGOLD-\d{5}"),
+    "server_inventory": (server_inventory, r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b"),
 }
+
+
+def generate(test_vars: dict) -> tuple[Generated, str]:
+    """Build the history described by a test's vars; returns (generated, answer pattern)."""
+    from ollama_provider import run_seed   # helpers/ is on PYTHONPATH (promptfooconfig env)
+
+    name = test_vars.get("generator")
+    if name not in GENERATORS:
+        raise ValueError(f"unknown generator {name!r} in vars.generator; available: {sorted(GENERATORS)}")
+    function, pattern = GENERATORS[name]
+    params = test_vars.get("params") or {}
+    return function(case_seed(run_seed(), test_vars["generator"], params), **params), pattern
+
+
+def get_var(var_name: str, prompt: str, other_vars: dict) -> dict:
+    """promptfoo variable loader: the chat history, as JSON (loaders must return strings)."""
+    generated, _ = generate(other_vars)
+    return {"output": json.dumps(generated.messages, ensure_ascii=False)}

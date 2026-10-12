@@ -1,0 +1,14 @@
+{
+  "name": "llm-lab",
+  "private": true,
+  "description": "Model-level evaluation of local Ollama models with promptfoo",
+  "scripts": {
+    "eval": "sh -c 'f=results/runs/$(date -u +%Y%m%d-%H%M%S).json; mkdir -p results/runs; PROMPTFOO_CONFIG_DIR=results/promptfoo PROMPTFOO_DISABLE_TELEMETRY=1 PROMPTFOO_DISABLE_UPDATE=1 promptfoo eval --no-table -o $f \"$@\"; s=$?; [ -f $f ] && exec .venv/bin/python helpers/summary.py $f; exit $s' eval",
+    "view": "PROMPTFOO_CONFIG_DIR=results/promptfoo PROMPTFOO_DISABLE_TELEMETRY=1 PROMPTFOO_DISABLE_UPDATE=1 promptfoo view",
+    "summary": ".venv/bin/python helpers/summary.py",
+    "test": "uv run pytest"
+  },
+  "devDependencies": {
+    "promptfoo": "0.123.1"
+  }
+}

@@ -1,5 +1,4 @@
-from llm_eval import sandbox
-from llm_eval.graders import grade
+import sandbox
 
 TESTS = [{"args": [2, 3], "expected": 5}, {"args": ["x", 1], "raises": "TypeError"}]
 
@@ -53,7 +52,12 @@ def test_extract_code_prefers_block_defining_function():
     assert sandbox.extract_code("no code here", "add") is None
 
 
-def test_python_function_grader_end_to_end():
-    answer = "```python\ndef add(a, b):\n    return a + b\n```"
-    result = grade(answer, {"type": "python_function", "function": "add", "tests": TESTS})
-    assert result.status == "pass"
+def test_fails_closed_without_network_isolation(monkeypatch):
+    monkeypatch.setattr(sandbox, "network_isolation_prefix", lambda: ())
+    outcome = sandbox.run_function_tests("def add(a, b):\n    return a + b\n", "add", TESTS)
+    assert outcome.status == "error" and "not executed" in outcome.detail
+
+
+def test_isolation_available_here():
+    # The suite's code-writing tests need it; if this fails they report errors, not results.
+    assert sandbox.network_isolation_prefix(), "unshare -rn unavailable on this machine"

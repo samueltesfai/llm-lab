@@ -11,9 +11,15 @@ determined adversary:
    with an empty environment and stdin closed.
 3. Resource limits: CPU seconds, address space, file size, open files, no new
    processes, plus a wall-clock timeout.
-4. No network: when `unshare -rn` works (unprivileged user + network namespace, as on
-   stock Fedora), the process runs without any network interfaces. Whether this was
-   available is reported in results.
+4. No network: the process runs under `unshare -rn` (unprivileged user + network
+   namespace, as on stock Fedora) and has no network interfaces. If that is not
+   available the sandbox FAILS CLOSED: the code is not run and the result is an error.
+
+Trust boundary: this guards against accidental damage and casual misuse by a model
+under evaluation on a personal machine. It is not a hardened sandbox: there is no
+filesystem isolation (the process can read whatever the user can, if it gets past the
+static policy, which is a denylist-style check and can have gaps), and it relies on
+the host kernel and Python. Don't use it for deliberately adversarial code.
 """
 
 from __future__ import annotations
@@ -142,6 +148,10 @@ def run_function_tests(code: str, function: str, tests: list[dict], timeout: flo
     problems = policy_violations(code)
     if problems:
         return SandboxOutcome("review", "code not executed (sandbox policy): " + "; ".join(problems[:5]))
+    isolation = network_isolation_prefix()
+    if not isolation:
+        return SandboxOutcome("error", "code not executed: network isolation (`unshare -rn`) is unavailable; "
+                                       "enable unprivileged user namespaces to run code-writing tests")
 
     marker = f"@@RESULT-{secrets.token_hex(8)}@@"
     with tempfile.TemporaryDirectory(prefix="llm_eval_sandbox_") as tmp:
@@ -149,7 +159,7 @@ def run_function_tests(code: str, function: str, tests: list[dict], timeout: flo
         (workdir / "solution.py").write_text(code, encoding="utf-8")
         (workdir / "tests.json").write_text(json.dumps(tests), encoding="utf-8")
         (workdir / "harness.py").write_text(HARNESS, encoding="utf-8")
-        command = [*network_isolation_prefix(), sys.executable, "-I", "harness.py", function, marker]
+        command = [*isolation, sys.executable, "-I", "harness.py", function, marker]
         try:
             completed = subprocess.run(
                 command, cwd=workdir, env={"LANG": "C.UTF-8"}, stdin=subprocess.DEVNULL,
@@ -158,7 +168,7 @@ def run_function_tests(code: str, function: str, tests: list[dict], timeout: flo
             )
         except subprocess.TimeoutExpired:
             return SandboxOutcome("fail", f"timed out after {timeout}s")
-        except OSError as exc:
+        except (OSError, subprocess.SubprocessError) as exc:   # incl. failure applying resource limits
             return SandboxOutcome("error", f"sandbox could not start: {exc}")
 
     stdout = completed.stdout[-OUTPUT_LIMIT_CHARS:]

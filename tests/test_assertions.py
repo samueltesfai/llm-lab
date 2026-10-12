@@ -1,6 +1,15 @@
 import pytest
 
-from llm_eval.graders import GRADERS, clean_answer, grade, normalize_short, strip_fence
+import assertions
+from assertions import clean_answer, normalize_short, strip_fence
+
+GRADERS = {"exact": assertions.grade_exact, "regex_extract": assertions.grade_regex_extract,
+           "number": assertions.grade_number, "choice": assertions.grade_choice,
+           "abstain": assertions.grade_abstain}
+
+
+def grade(answer, spec):
+    return GRADERS[spec["type"]](clean_answer(answer), spec)
 
 
 def g(answer, **spec):
@@ -75,19 +84,6 @@ class TestNumber:
         assert g("3.14", type="number", expected=3.1416, tolerance=0.01).status == "pass"
 
 
-class TestContains:
-    def test_all_and_none(self):
-        spec = {"type": "contains", "all": ["wednesday", "14:00"], "none": ["tuesday"]}
-        assert grade("Wednesday at 14:00", spec).status == "pass"
-        assert grade("Wednesday at 14:00 (moved from Tuesday)", spec).status == "fail"
-        assert grade("Wednesday", spec).status == "fail"
-
-    def test_any(self):
-        spec = {"type": "contains", "any": ["postgres", "pg"]}
-        assert grade("PostgreSQL", spec).status == "pass"
-        assert grade("MySQL", spec).status == "fail"
-
-
 class TestChoice:
     @pytest.mark.parametrize("answer", ["C", "(C)", "C.", "The answer is C", "Answer: C", "C) uses a set", "**C**"])
     def test_extracts(self, answer):
@@ -98,70 +94,6 @@ class TestChoice:
 
     def test_unclear_is_review(self):
         assert g("Probably the one with a set.", type="choice", expected="C").status == "review"
-
-
-class TestJson:
-    schema = {
-        "type": "object", "additionalProperties": False, "required": ["id", "tags"],
-        "properties": {"id": {"type": "integer"}, "tags": {"type": "array", "items": {"type": "string"}}},
-    }
-
-    def test_valid(self):
-        result = g('{"id": 1, "tags": ["b", "a"]}', type="json", schema=self.schema,
-                   expect={"id": 1, "tags": ["A", "B"]}, unordered_lists=True)
-        assert result.status == "pass"
-
-    def test_fenced_allowed_by_default(self):
-        assert g('```json\n{"id": 1, "tags": []}\n```', type="json", schema=self.schema).status == "pass"
-
-    def test_fence_rejected_when_disallowed(self):
-        assert g('```json\n{"id": 1, "tags": []}\n```', type="json", allow_fences=False).status == "fail"
-
-    def test_invalid_json(self):
-        result = g("{id: 1}", type="json")
-        assert result.status == "fail" and "invalid JSON" in result.detail
-
-    def test_schema_violation_extra_field(self):
-        result = g('{"id": 1, "tags": [], "email": "x"}', type="json", schema=self.schema)
-        assert result.status == "fail" and "schema" in result.detail
-
-    def test_wrong_type(self):
-        assert g('{"id": "1", "tags": []}', type="json", schema=self.schema).status == "fail"
-
-    def test_expected_value_mismatch(self):
-        result = g('{"id": 2, "tags": []}', type="json", expect={"id": 1})
-        assert result.status == "fail" and "id" in result.detail
-
-    def test_ordered_list_root(self):
-        expect = {"$": [{"name": "a"}, {"name": "b"}]}
-        assert g('[{"name": "a"}, {"name": "b"}]', type="json", expect=expect).status == "pass"
-        assert g('[{"name": "b"}, {"name": "a"}]', type="json", expect=expect).status == "fail"
-
-    def test_bool_is_not_int(self):
-        assert g('{"x": true}', type="json", expect={"x": 1}).status == "fail"
-
-    def test_forbidden_keys_and_text(self):
-        assert g('{"a": {"phone": "1"}}', type="json", forbidden_keys=["phone"]).status == "fail"
-        assert g('{"a": "me@example.org"}', type="json", forbidden_text=["@"]).status == "fail"
-
-
-class TestConstraints:
-    spec = {"type": "constraints", "checks": [
-        {"line_count": {"eq": 3}}, {"each_line_matches": r"^- \S"},
-        {"each_line_max_words": 5}, {"not_contains": "cloud"}]}
-
-    def test_pass(self):
-        assert grade("- one two\n- three four\n- five six", self.spec).status == "pass"
-
-    def test_reports_every_violation(self):
-        result = grade("Intro\n- use the cloud now please always\n- b", self.spec)
-        assert result.status == "fail"
-        assert "lines=3" not in result.detail  # 3 lines is correct here
-        assert "don't match" in result.detail and "exceed" in result.detail and "cloud" in result.detail
-
-    def test_unknown_check_raises(self):
-        with pytest.raises(ValueError):
-            g("x", type="constraints", checks=[{"bogus": 1}])
 
 
 class TestAbstain:
@@ -179,6 +111,38 @@ class TestAbstain:
         assert g("The manager is Alice Smith.", type="abstain").status == "fail"
 
 
-def test_registry_required_keys_are_tuples():
-    for name, (function, required) in GRADERS.items():
-        assert callable(function) and isinstance(required, tuple), name
+class TestPromptfooEntryPoints:
+    def test_result_shape_and_review_prefix(self):
+        assert assertions.number("2080", {"config": {"expected": 2080}}) == {"pass": True, "score": 1.0, "reason": "pass"}
+        result = assertions.choice("not sure", {"config": {"expected": "C"}})
+        assert result["pass"] is False and result["reason"].startswith("REVIEW:")
+
+    def test_cut_off_answer_is_explained(self):
+        context = {"config": {"expected": 1},
+                   "providerResponse": {"metadata": {"metrics": {"done_reason": "length", "output_tokens": 2048}}}}
+        assert "cut off at 2048 tokens" in assertions.number("no", context)["reason"]
+        reason = assertions.choice("unclear", {**context, "config": {"expected": "C"}})["reason"]
+        assert reason.startswith("REVIEW:") and "cut off" in reason
+
+    def test_long_context_answer_regenerates_expected(self):
+        import long_context
+
+        test_vars = {"generator": "meeting_notes", "params": {"notes": 12, "position": "late"}}
+        generated, _ = long_context.generate(test_vars)
+        code = generated.grader_updates["expected"]
+        assert assertions.long_context_answer(f"The code is {code}.", {"vars": test_vars})["pass"]
+        assert not assertions.long_context_answer(f"{code} or MARIGOLD-00000", {"vars": test_vars})["pass"]
+
+    def test_broken_assertion_config_is_an_error_not_a_failure(self):
+        result = assertions.number("42", {"config": {}})              # missing 'expected'
+        assert not result["pass"] and result["reason"].startswith("ERROR: assertion config problem")
+        result = assertions.regex_extract("x", {"config": {"pattern": "(", "expected": "x"}})
+        assert result["reason"].startswith("ERROR:")
+        assert assertions.python_function("x", {"config": {}})["reason"].startswith("ERROR:")
+        result = assertions.long_context_answer("x", {"vars": {"generator": "nope"}})
+        assert result["reason"].startswith("ERROR: cannot regenerate") and "available" in result["reason"]
+
+    def test_python_function_entry_point(self):
+        context = {"config": {"function": "add", "tests": [{"args": [1, 2], "expected": 3}]}}
+        assert assertions.python_function("```python\ndef add(a, b):\n    return a + b\n```", context)["pass"]
+        assert assertions.python_function("no code", context)["reason"] == "no Python code found in answer"

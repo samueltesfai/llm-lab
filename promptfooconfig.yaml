@@ -1,0 +1,38 @@
+# Model-level evaluation of a local Ollama model: 41 cases, ~1 minute warm on an
+# RTX 5070 Ti. Run with `npm run eval`; per-run settings via EVAL_* variables (README).
+description: Model-level evaluation of a local Ollama model
+
+env:
+  PROMPTFOO_PYTHON: .venv/bin/python   # the uv-managed project environment
+  PYTHONPATH: helpers                  # so helper modules can import each other
+
+prompts:
+  # Every test supplies its chat history in vars.messages: a YAML list in most
+  # scenarios, a JSON string from the long_context generator. The provider parses it.
+  - '{% if messages is string %}{{ messages }}{% else %}{{ messages | dump }}{% endif %}'
+
+providers:
+  - id: file://helpers/ollama_provider.py
+    label: ollama
+    config:              # defaults; EVAL_* environment variables override per run
+      model: qwen3.5:9b
+      num_ctx: 32768     # the long_context 20k-26k cases need this much
+      temperature: 0
+      think: false
+      keep_alive: 5m
+
+defaultTest:
+  options:
+    disableVarExpansion: true   # vars.messages is one chat history, not a list of inputs
+
+evaluateOptions:
+  maxConcurrency: 1   # one request at a time; concurrent requests would distort timings
+  cache: false        # promptfoo would otherwise replay stored answers for 14 days
+
+tests:
+  - file://scenarios/long_context.yaml
+  - file://scenarios/instruction_following.yaml
+  - file://scenarios/multi_turn.yaml
+  - file://scenarios/corrections.yaml
+  - file://scenarios/grounded_qa.yaml
+  - file://scenarios/programming.yaml

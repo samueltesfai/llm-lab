@@ -2,10 +2,7 @@
 name = "llm-lab"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = [
-    "jsonschema>=4.26.0",
-    "pyyaml>=6.0.3",
-]
+dependencies = []
 
 [dependency-groups]
 dev = [
@@ -14,4 +11,4 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
+pythonpath = ["helpers"]

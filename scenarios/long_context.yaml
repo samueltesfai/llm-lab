@@ -1,75 +1,89 @@
-category: long_context
-description: >
-  Locate one precise fact in a long supplied conversation or document. Inputs come
-  from deterministic generators (llm_eval/generators.py); the meeting-notes generator
-  is adapted from experiments/001_context_recall. Token figures are approximate for
-  Qwen-family tokenizers (about 120 tokens per meeting note, 45 per inventory row).
-  The expected answer is randomized per case and seed, so the model cannot have
-  memorized it.
+# long_context: find one precise fact in a long supplied conversation or document.
+# Histories are generated deterministically by helpers/long_context.py from the
+# generator and params below (meeting_notes is adapted from experiment 001). The
+# expected answer is random per seed, so it can't have been memorized; the assertion
+# regenerates it. Token counts are approximate for Qwen-family tokenizers (~120 per
+# meeting note, ~45 per inventory row); the actual count is in each result.
+# The 20k-26k cases need num_ctx 32768 (the default); at smaller EVAL_NUM_CTX values
+# they are reported INVALID, never failed.
 
-defaults:
-  options: {num_predict: 64}
-  grader:
-    type: regex_extract
-    pattern: 'MARIGOLD-\d{5}'
-    extra: fail          # naming several candidate codes is a wrong answer here
+- description: lc_notes_early
+  metadata: {category: long_context, num_predict: 64, purpose: Recall a code stated near the beginning of a 40-note (~5k token) meeting log.}
+  vars:
+    generator: meeting_notes
+    params: {notes: 40, position: early}
+    messages: file://helpers/long_context.py
+  assert:
+    - {type: python, value: file://helpers/assertions.py:long_context_answer}
 
-cases:
-  # -- standard profile: about 5k tokens, fits comfortably in the default num_ctx ----------
-  - id: lc_notes_early
-    purpose: Recall a code stated near the beginning of a 40-note (~5k token) meeting log.
-    generator: {name: meeting_notes, params: {notes: 40, position: early}}
+- description: lc_notes_middle
+  metadata: {category: long_context, num_predict: 64, purpose: Recall a code stated in the middle of a 40-note (~5k token) meeting log.}
+  vars:
+    generator: meeting_notes
+    params: {notes: 40, position: middle}
+    messages: file://helpers/long_context.py
+  assert:
+    - {type: python, value: file://helpers/assertions.py:long_context_answer}
 
-  - id: lc_notes_middle
-    purpose: Recall a code stated in the middle of a 40-note (~5k token) meeting log.
-    generator: {name: meeting_notes, params: {notes: 40, position: middle}}
+- description: lc_notes_late
+  metadata: {category: long_context, num_predict: 64, purpose: Recall a code stated near the end of a 40-note (~5k token) meeting log.}
+  vars:
+    generator: meeting_notes
+    params: {notes: 40, position: late}
+    messages: file://helpers/long_context.py
+  assert:
+    - {type: python, value: file://helpers/assertions.py:long_context_answer}
 
-  - id: lc_notes_late
-    purpose: Recall a code stated near the end of a 40-note (~5k token) meeting log.
-    generator: {name: meeting_notes, params: {notes: 40, position: late}}
+- description: lc_notes_similar_distractors
+  metadata: {category: long_context, num_predict: 64, purpose: 'Pick the right code when six look-alike facts (same sentence pattern and code format, similarly named projects such as "Aurora Mobile") are spread through the log.'}
+  vars:
+    generator: meeting_notes
+    params: {notes: 40, position: middle, similar_distractors: 6}
+    messages: file://helpers/long_context.py
+  assert:
+    - {type: python, value: file://helpers/assertions.py:long_context_answer}
 
-  - id: lc_notes_similar_distractors
-    purpose: >
-      Pick the right code when six look-alike facts (same sentence pattern and code
-      format, similarly named projects such as "Aurora Mobile" and "Aurelia") are spread
-      through the log.
-    generator: {name: meeting_notes, params: {notes: 40, position: middle, similar_distractors: 6}}
+- description: lc_inventory_ip
+  metadata: {category: long_context, num_predict: 64, purpose: Look up one row of a 100-row (~5k token) table where near-miss hostnames (db-prod-07, db-stage-17) sit beside the target db-prod-17.}
+  vars:
+    generator: server_inventory
+    params: {rows: 100, position: middle}
+    messages: file://helpers/long_context.py
+  assert:
+    - {type: python, value: file://helpers/assertions.py:long_context_answer}
 
-  - id: lc_inventory_ip
-    purpose: >
-      Look up one row of a 100-row (~5k token) markdown table, where near-miss hostnames
-      such as db-prod-07 and db-stage-17 sit beside the target db-prod-17.
-    generator: {name: server_inventory, params: {rows: 100, position: middle}}
-    grader:
-      type: regex_extract
-      pattern: '\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b'
-      extra: fail
+- description: lc_long_notes_middle_11k
+  metadata: {category: long_context, num_predict: 64, purpose: The experiment-001 setting (90 notes, ~11k tokens) with the fact mid-way.}
+  vars:
+    generator: meeting_notes
+    params: {notes: 90, position: middle}
+    messages: file://helpers/long_context.py
+  assert:
+    - {type: python, value: file://helpers/assertions.py:long_context_answer}
 
-  # -- long profile: run with --profile long (and a larger --num-ctx where noted) -----------
-  - id: lc_long_notes_middle_11k
-    profile: long
-    min_ctx: 16384
-    purpose: The experiment-001 setting (90 notes, ~11k tokens) with the fact mid-way.
-    generator: {name: meeting_notes, params: {notes: 90, position: middle}}
+- description: lc_long_notes_distractors_11k
+  metadata: {category: long_context, num_predict: 64, purpose: About 11k tokens with the fact late in the log and six look-alike facts.}
+  vars:
+    generator: meeting_notes
+    params: {notes: 90, position: late, similar_distractors: 6}
+    messages: file://helpers/long_context.py
+  assert:
+    - {type: python, value: file://helpers/assertions.py:long_context_answer}
 
-  - id: lc_long_notes_distractors_11k
-    profile: long
-    min_ctx: 16384
-    purpose: About 11k tokens with the fact late in the log and six look-alike facts.
-    generator: {name: meeting_notes, params: {notes: 90, position: late, similar_distractors: 6}}
+- description: lc_long_notes_early_26k
+  metadata: {category: long_context, num_predict: 64, purpose: Fact near the start of a ~26k-token log with four look-alike facts.}
+  vars:
+    generator: meeting_notes
+    params: {notes: 210, position: early, similar_distractors: 4}
+    messages: file://helpers/long_context.py
+  assert:
+    - {type: python, value: file://helpers/assertions.py:long_context_answer}
 
-  - id: lc_long_notes_early_26k
-    profile: long
-    min_ctx: 32768
-    purpose: Fact near the start of a ~26k-token log (needs --num-ctx 32768).
-    generator: {name: meeting_notes, params: {notes: 210, position: early, similar_distractors: 4}}
-
-  - id: lc_long_inventory_ip_20k
-    profile: long
-    min_ctx: 32768
-    purpose: Row lookup in a 450-row (~20k token) table with near-miss hostnames (needs --num-ctx 32768).
-    generator: {name: server_inventory, params: {rows: 450, position: late}}
-    grader:
-      type: regex_extract
-      pattern: '\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b'
-      extra: fail
+- description: lc_long_inventory_ip_20k
+  metadata: {category: long_context, num_predict: 64, purpose: Row lookup in a 450-row (~20k token) table with near-miss hostnames.}
+  vars:
+    generator: server_inventory
+    params: {rows: 450, position: late}
+    messages: file://helpers/long_context.py
+  assert:
+    - {type: python, value: file://helpers/assertions.py:long_context_answer}

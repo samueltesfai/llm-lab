@@ -10,7 +10,8 @@ inference costs in time and memory on consumer hardware.
 - GPU: NVIDIA RTX 5070 Ti (16 GB VRAM)
 - Runtime: Ollama
 - Initial model: Qwen3.5-9B (`qwen3.5:9b`)
-- Python managed with `uv` (`pyproject.toml`, `uv.lock`)
+- Evaluation framework: [promptfoo](https://www.promptfoo.dev/) (Node.js, pinned in `package.json`)
+- Python managed with `uv` (`pyproject.toml`, `uv.lock`), for evaluation helpers only
 
 ## Two evaluation layers
 
@@ -25,290 +26,258 @@ The suite establishes a baseline for the first layer, so that differences observ
 later at the application layer can be attributed to the application rather than to
 the model or its settings.
 
+## Layout
+
+```
+promptfooconfig.yaml     the suite: provider, prompt, run options, scenario files
+scenarios/               test cases, one promptfoo test file per category
+helpers/                 Python only where promptfoo has no built-in equivalent
+  ollama_provider.py     Ollama client: timings, KV-cache accounting, invalid-run detection
+  long_context.py        deterministic long chat histories (seeded generators)
+  assertions.py          answer checks promptfoo lacks, e.g. normalized match, abstention
+  sandbox.py             restricted execution of model-written code
+  summary.py             per-category console summary, timings, exit status
+tests/                   tests of the helpers (mocked Ollama; no server needed)
+experiments/             standalone experiments
+results/                 run reports (git-ignored)
+```
+
+promptfoo handles test loading, filtering, repetition, built-in assertions
+(substring, regex, JSON Schema, exact match, JavaScript), result storage, and the web
+viewer. The helpers exist only for logic specific to these evaluations.
+
 ## Setup
 
 ```bash
-uv sync            # creates .venv with runtime and dev dependencies
+uv sync                  # Python environment for the helpers (pytest is the only dependency)
+npm install              # promptfoo, pinned
 ollama pull qwen3.5:9b   # the suite never pulls or modifies models itself
 ```
 
-Runtime dependencies are `pyyaml` (scenario files) and `jsonschema` (structured-output
-validation); `pytest` is a dev dependency. Ollama is reached over plain HTTP from the
-standard library.
+Node.js 22.22+ is required (`sudo dnf install nodejs24`).
 
-## Running the evaluation suite
+## Running
 
 ```bash
-# Standard suite (37 cases, ~25 s on an RTX 5070 Ti once the model is loaded)
-uv run python -m llm_eval --model qwen3.5:9b
+npm run eval                                              # all 41 cases, ~1 minute warm
+npm run eval -- --filter-metadata category=corrections    # one category
+npm run eval -- --filter-pattern '^pg_trace'              # cases by id (regex)
+npm run eval -- --filter-pattern '^cr_rejected_proposal$' # one case
+npm run eval -- --repeat 5                                # repeated trials
 
-# List cases without contacting Ollama
-uv run python -m llm_eval --list
-uv run python -m llm_eval --list --profile all
+EVAL_MODEL=llama3.1:8b EVAL_NUM_CTX=8192 npm run eval     # another model / context
+EVAL_TEMPERATURE=0.7 EVAL_SEED=1 npm run eval -- --repeat 5
+EVAL_THINK=1 EVAL_NUM_PREDICT=4096 npm run eval           # thinking mode
+EVAL_OPTIONS='{"top_k": 20}' npm run eval                 # any other Ollama option
+EVAL_HOST=http://gpu-box:11434 npm run eval               # another Ollama server
 
-# One category, or specific cases (glob patterns; --case ignores --profile)
-uv run python -m llm_eval --category corrections
-uv run python -m llm_eval --category grounded_qa,programming
-uv run python -m llm_eval --case pg_trace_mutable_default
-uv run python -m llm_eval --case 'lc_*'
-
-# Expensive long-context profile (11k-26k token prompts)
-uv run python -m llm_eval --profile long --num-ctx 32768
-
-# Another model, other inference settings
-uv run python -m llm_eval --model llama3.1:8b --num-ctx 8192
-uv run python -m llm_eval --temperature 0.7 --trials 5 --seed 1
-uv run python -m llm_eval --think --num-predict 4096      # enable thinking mode
-uv run python -m llm_eval --option top_k=20 --option repeat_penalty=1.1
-
-# Remote server, print answers of non-passing cases, tag the run
-uv run python -m llm_eval --host http://gpu-box:11434 -v --label "after driver update"
+npm run view             # promptfoo's web viewer: every run, every answer, side by side
+npm test                 # the helpers' own tests
 ```
 
-`uv run python -m llm_eval --help` lists every option. The most important:
+Arguments after `--` go to `promptfoo eval`, so any of its options work. Per-run
+settings are environment variables, since promptfoo cannot override provider config
+from the command line. Defaults are in `promptfooconfig.yaml`.
 
-| Option | Default | Meaning |
+| Variable | Default | Meaning |
 |---|---|---|
-| `--model` | `qwen3.5:9b` | Installed Ollama model tag |
-| `--host` | `http://127.0.0.1:11434` | Ollama server URL |
-| `--num-ctx` | `16384` | Context window requested from Ollama |
-| `--temperature` | `0.0` | Sampling temperature |
-| `--seed` | `2026` | Seed for scenario generators and sampling; trial *i* samples with `seed + i` |
-| `--num-predict` | per case | Overrides every case's output-token limit |
-| `--think` | off | Enable the model's thinking mode; raise `--num-predict` with it |
-| `--option KEY=VALUE` | | Any other Ollama option (value parsed as JSON) |
-| `--trials` | `1` | Repetitions of each case |
-| `--profile` | `standard` | `standard`, `long`, or `all` |
-| `--no-warmup` | | Skip the untimed request that loads the model first |
-| `--allow-truncation` | | Let Ollama silently truncate over-long prompts (not recommended) |
+| `EVAL_MODEL` | `qwen3.5:9b` | Installed Ollama model tag |
+| `EVAL_HOST` | `http://127.0.0.1:11434` | Ollama server URL |
+| `EVAL_NUM_CTX` | `32768` | Context window requested from Ollama |
+| `EVAL_TEMPERATURE` | `0` | Sampling temperature |
+| `EVAL_SEED` | `2026` | Seed for generated histories and sampling; repeat *i* samples with `seed + i` |
+| `EVAL_NUM_PREDICT` | per test | Overrides every test's output-token limit |
+| `EVAL_THINK` | off | Thinking mode; raise `EVAL_NUM_PREDICT` with it |
+| `EVAL_OPTIONS` | `{}` | JSON object of other Ollama options |
 
-Exit status: `0` all graded cases passed (`review`/`skipped` allowed), `1` at least one
-failure, `2` some results were `invalid`/`error` or the run aborted, `3` the run could
-not start (Ollama unreachable, model not installed, invalid scenario files), `130`
-interrupted.
+The run scripts disable promptfoo's telemetry and update check, and promptfoo's
+response cache is off (`evaluateOptions.cache: false`). With the cache on, a rerun
+would replay stored answers for up to 14 days, with no new timings. Requests run one
+at a time, because concurrency would distort timings.
+
+**Exit status** (from `helpers/summary.py`): `0` every test passed, `1` at least one
+failed, `2` some results were invalid or errored, so the pass rate isn't trustworthy.
+Any other code means promptfoo itself failed (e.g. invalid YAML). Malformed settings
+(`EVAL_NUM_CTX=lots`, a misspelled provider config key, a test without a valid
+`messages` list, a broken assertion config) show up as per-test errors whose message
+names the problem.
 
 ## What is tested
 
-| Category | Standard / long cases | Evaluates |
+| Category | Cases | Evaluates |
 |---|---|---|
-| `long_context` | 5 / 4 | Finding one precise fact early, mid-way, or late in a long conversation or table, with look-alike distractor facts. Inputs are generated deterministically; the generator is adapted from [experiment 001](experiments/001_context_recall/). |
-| `instruction_following` | 6 | JSON that must satisfy a schema (required/forbidden fields, enums, types), simultaneous format rules, exact line/CSV formats. |
+| `long_context` | 9 | Finding one precise fact early, mid-way, or late in a 5k–26k-token conversation or table, with look-alike distractor facts. Histories are generated deterministically; the generator is adapted from [experiment 001](experiments/001_context_recall/) and reproduces its prompts exactly. |
+| `instruction_following` | 6 | JSON satisfying a schema (required/forbidden fields, enums, types), simultaneous format rules, exact line/CSV formats. |
 | `multi_turn` | 5 | Combining facts spread across a scripted conversation: sums, constraint intersection, assembling a URL, ordering, aggregation. |
 | `corrections` | 7 | Corrected, twice-superseded, partially corrected, rejected, and merely tentative changes; plus asking for the *historical* value. |
-| `grounded_qa` | 7 | Answering from a supplied document: extraction, combining facts, applying a rule, and abstaining (`NOT IN SOURCE`) when the document lacks the answer. |
+| `grounded_qa` | 7 | Answering from a supplied document: extraction, combining facts, applying a rule, abstaining (`NOT IN SOURCE`) when the answer isn't there. |
 | `programming` | 7 | Tracing program output, locating and fixing a bug, choosing a correct implementation, writing functions checked by hidden tests. |
 
-Cases live in [`scenarios/*.yaml`](scenarios/); every case has a `purpose` line. Run
-`--list` to read them.
-
-The history in multi-turn, corrections, and grounded-QA cases, **including the assistant
-turns, is synthetic**. It was written by hand and sent in a single request. These cases
-measure how a model reasons over supplied history, not whether any application
-remembers anything.
+Every test has a `metadata.purpose`. The history in multi-turn, corrections, and
+grounded-QA tests, **including the assistant turns, is synthetic**. It was written by
+hand and sent in a single request. These tests measure reasoning over supplied
+history, not whether any application remembers anything.
 
 ## Results
 
-Each run writes a new directory; nothing is ever overwritten:
+Each `npm run eval` writes **one JSON report per suite execution**, filtered runs
+included: `results/runs/<UTC timestamp>.json`. It contains:
 
-```
-results/runs/<UTC timestamp>_<model>_ctx<num_ctx>/
-  run.json        # effective config, environment, selection, warm-up, summary
-  results.jsonl   # one record per case trial, appended as the run progresses
-```
+- the full configuration
+- one entry per test: id, category and purpose, the prompt, the answer, every
+  assertion's verdict and reason, and provider metadata: timings, effective Ollama
+  options, Ollama version, model digest, quantization, and any thinking trace
+- run-level statistics
 
-`run.json` records the command line, all effective options, Ollama version, model
-digest/quantization/parameter size, model memory placement from `/api/ps`
-(`size_vram`, allocated `context_length`), git commit and dirty flag, SHA-256 of every
-scenario file, Python version, and whether the code sandbox had network isolation.
-Each record in `results.jsonl` holds the full answer (and thinking text, if any), the
-expected value, the grader's verdict and detail, the effective options, a hash of the
-exact prompt, generator seed and metadata, and all timing/token metrics.
+promptfoo also keeps an index of runs in `results/promptfoo/` for `npm run view`.
+`results/` is git-ignored; `git add -f` the reports you want versioned. Results of
+the original context-recall experiment are in `results/001_context_recall/`.
 
-`results/` is git-ignored. Use `git add -f` for runs you want to keep in history.
-Results of the original context-recall experiment are in `results/001_context_recall/`.
-
-Compare stored runs:
+Compare runs:
 
 ```bash
-uv run python -m llm_eval.compare             # one row per run, per-category pass counts
-uv run python -m llm_eval.compare --cases     # plus a case-by-run status matrix
-uv run python -m llm_eval.compare results/runs/2026*_ctx32768
+npm run summary -- results/runs/20261012-220517.json            # one run in detail
+npm run summary -- results/runs/*.json                          # one row per run
 ```
 
-## Interpreting scores
-
-Every trial gets one status:
+## Interpreting results
 
 | Status | Meaning |
 |---|---|
-| `pass` | Meets the case's acceptance criteria. |
-| `fail` | Objectively wrong: wrong value, invalid JSON, schema violation, failed tests, invented detail. |
-| `review` | Possibly acceptable, but a simple rule can't decide, e.g. the right value appears together with other candidates, or an abstention without the required marker, or code the sandbox refused to run. Inspect the answer. |
-| `invalid` | The result says nothing reliable about the model, e.g. the prompt didn't fit `num_ctx`, or the answer was cut off by `num_predict`. |
-| `error` | The request failed (HTTP error, timeout, malformed response). |
-| `skipped` | Not attempted: the case requires a larger `--num-ctx` (`min_ctx`). |
+| pass | Meets the test's acceptance criteria. |
+| fail | Objectively wrong: wrong value, invalid JSON, schema violation, failed hidden tests, invented detail. A reason starting `REVIEW:` means "possibly acceptable, but no simple rule can decide" (e.g. the right value alongside other candidates, or an abstention without the agreed marker). Inspect those. |
+| invalid | Says nothing about the model: the prompt didn't fit `num_ctx`, looks truncated, or the answer was cut off by `num_predict`. promptfoo shows these as errors; the summary separates them. |
+| error | Infrastructure, not the model: the request failed (unreachable server, missing model, timeout, HTTP error), the configuration is malformed, or a check couldn't run (broken assertion config, sandbox unavailable). |
 
-**Pass rate = pass / (pass + fail + review).** `review` counts against the rate until a
-human decides; `invalid`, `error`, and `skipped` are excluded and reported separately.
-
-Graders are deterministic: normalized exact match, regex extraction, numeric comparison,
-JSON Schema validation, explicit format checks, abstention checks, and executing hidden
-unit tests. There is no LLM-as-judge.
+All checks are deterministic: promptfoo's built-in assertions, plus the Python ones
+in `helpers/assertions.py` (normalized exact match, number, option-letter, and
+name-set extraction, abstention, regenerated long-context answers, sandboxed
+hidden tests). There is no LLM-as-judge.
 
 Context limits are handled explicitly:
 
-- Requests are sent with `truncate: false`. Recent Ollama versions then reject an
-  over-long prompt (HTTP 400, `exceed_context_size_error`) instead of silently dropping
-  earlier messages; the suite records that as `invalid` with the token counts. Without
-  this, Ollama 0.40 cut a 2,058-token prompt to 937 tokens at `num_ctx=1024` and the
-  model simply answered `UNKNOWN`, which would have looked like a retrieval failure.
-- For servers that ignore `truncate`, a heuristic marks a result `invalid` if far fewer
-  prompt tokens were processed than the prompt's length implies (> 8 characters per
-  token). `prompt_eval_count` can't prove that nothing was dropped, only make it
-  implausible.
-- If prompt plus output reaches `num_ctx`, or the answer hits `num_predict` without
-  passing, the result is `invalid`. Cases whose output budget is ~10× what a correct
-  answer needs may declare `cutoff: fail`, so rambling past the budget counts as a
-  failure. That policy is disabled under `--think`.
-- Ollama may allocate a different context than requested (it allocated 2048 when 1024
-  was asked). The allocated value from `/api/ps` is stored in `run.json`.
+- The provider sends `truncate: false`. Ollama then rejects an over-long prompt
+  (`exceed_context_size_error`) instead of silently dropping earlier messages, and the
+  test is reported invalid with the token counts. Without this, Ollama 0.40 cut a
+  2,058-token prompt to 937 tokens at `num_ctx=1024`, and the model answered `UNKNOWN`,
+  which would have looked like a retrieval failure.
+- For servers that ignore `truncate`, a result is invalid if far fewer prompt tokens
+  were processed than its length implies (more than 8 characters per token), or if
+  prompt plus output filled `num_ctx`. `prompt_eval_count` can't prove a prompt was
+  complete, only make truncation implausible.
+- An answer cut off by `num_predict` is invalid. Exception: tests whose budget is about
+  10× a correct answer declare `cutoff: fail`, so rambling counts as a failure. That
+  policy is disabled in thinking mode.
 
 ## Interpreting timing
 
-Per request (all in `results.jsonl` → `metrics`):
+The provider records, per test (`response.metadata.metrics` in the report):
 
 | Field | Source | Meaning |
 |---|---|---|
-| `wall_s` | client | Whole HTTP request as observed by the suite |
-| `total_s`, `load_s`, `prompt_eval_s`, `eval_s` | Ollama `*_duration` (ns → s) | Server-side total, model load, prompt processing, generation |
-| `prompt_tokens` | `prompt_eval_count` | Prompt tokens in the request, **including** cached ones |
-| `prompt_cached_tokens` | `prompt_eval_cached_count` | Tokens reused from the KV (prefix) cache |
-| `prompt_tokens_per_s` | derived | Uncached tokens / `prompt_eval_s`; only when ≥ 256 uncached tokens |
+| `wall_s` | client | Whole request as observed by the provider |
+| `total_s`, `load_s`, `prompt_eval_s`, `eval_s` | Ollama `*_duration` (ns → s) | Server total, model load, prompt processing, generation |
+| `prompt_tokens` | `prompt_eval_count` | Prompt tokens, **including** cached ones |
+| `prompt_cached_tokens` | `prompt_eval_cached_count` | Tokens reused from Ollama's KV (prefix) cache |
+| `prompt_tokens_per_s` | derived | `prompt_tokens / prompt_eval_s`; only when nothing was cached and ≥ 256 tokens, otherwise unavailable (`null`) |
 | `decode_tokens_per_s` | derived | `eval_count / eval_s`; only when ≥ 16 output tokens |
 | `cold_load` | derived | `load_s` > 1 s: weights were (re)loaded during this request |
 
-Warm versus cold:
+- **Warm vs. cold.** Before the first test, the provider sends a warm-up request with
+  the run's `num_ctx`; changing `num_ctx` forces a reload. Its metrics are stored as
+  `metadata.warmup`, and later reloads are flagged per test and in the summary.
+- **Prefix caching.** Ollama reuses the KV cache for a prompt prefix it just processed,
+  including across runs within the `keep_alive` window. Verified against Ollama 0.40.3:
+  `prompt_eval_count` includes cached tokens, `prompt_eval_cached_count` reports them,
+  and `prompt_eval_duration` covers only the rest. An exact repeat of a 4,964-token
+  prompt reported 4,960 cached tokens and 0.03 s. Reuse is partial and model-dependent:
+  a shared 4,950-token prefix gave 4,452 cached tokens, since qwen3.5 reuses in ~512-token
+  steps. A few fresh tokens after a long cached prefix also process slower per token
+  than a cold prompt (~3,800 vs ~5,000 tok/s here). So prompt throughput is reported
+  only for requests with nothing cached, and as unavailable when Ollama omits the
+  cached count (older versions). With `--repeat` at temperature 0, later repeats are
+  mostly cached.
+- Decode throughput is the most comparable figure across runs. Thinking tokens count
+  as output tokens.
 
-- **Model loading.** Before the cases, an untimed warm-up request loads the model with the
-  run's `num_ctx`. Changing `num_ctx` forces Ollama to reload. Its cost is stored as
-  `run.json → warmup.load_s`, so case timings start warm. Any later reload (e.g. the
-  model was evicted) is flagged per request and in the summary.
-- **Prompt (prefix) caching.** Ollama reuses the KV cache for a prompt prefix it has just
-  processed, including across runs within the `keep_alive` window. A repeated request
-  can then report ~10k prompt tokens processed in 0.03 s. The suite computes prompt
-  throughput only from **uncached** tokens, so cached requests don't inflate it. With
-  `--trials > 1` at temperature 0, later trials mostly measure the cache.
-- Decode throughput is stable and comparable across runs. Prompt throughput depends on
-  prompt length and batch settings. Compare it between runs with the same profile.
-- Thinking tokens count as output tokens (`eval_count`), so `--think` raises latency.
+## Adding a test
 
-## Adding a scenario
-
-Add a case to the relevant file in `scenarios/` (or create a new `*.yaml` file; a new
-category name works without code changes). No runner edits are needed:
+Add an entry to the relevant file in `scenarios/` (new files go in the config's
+`tests` list). Prefer a built-in assertion; use a Python one from
+`helpers/assertions.py` only when none fits.
 
 ```yaml
-  - id: cr_new_example                 # unique across all files
-    purpose: What this case evaluates, in one sentence.
+- description: cr_new_example            # unique id
+  metadata:
+    category: corrections
+    purpose: What this test evaluates, in one sentence.
+    num_predict: 32                      # optional output budget (default 512)
+  vars:
     messages:
       - {role: user, content: "The release is on Friday."}
       - {role: assistant, content: "Noted."}
       - {role: user, content: "Correction: Monday. When is the release? One word."}
-    grader:
-      type: regex_extract
-      pattern: '\b(?:monday|friday)\b'
-      expected: monday
-    options: {num_predict: 32}         # optional; num_ctx/temperature/seed are run-level
+  assert:
+    - {type: icontains, value: monday}
+    - {type: not-icontains, value: friday}
 ```
 
-Available graders (see `llm_eval/graders.py`):
-
-| `type` | Key fields | Use for |
-|---|---|---|
-| `exact` | `expected` (str or list), `case_sensitive` | Precisely specified output |
-| `regex_extract` | `pattern`, `expected` (str or set), `extra: review/fail` | Codes, names, IDs inside free text |
-| `number` | `expected`, `tolerance`, `extra` | Numeric answers |
-| `contains` | `all`, `any`, `none` (regex lists) | Required and forbidden content |
-| `choice` | `expected` letter, `options` | Multiple choice |
-| `json` | `schema`, `expect {path: value}`, `forbidden_keys`, `forbidden_text`, `unordered_lists`, `allow_fences` | Structured output |
-| `constraints` | `checks: [line_count, word_count, each_line_matches, each_line_max_words, contains, not_contains]` | Format rules |
-| `abstain` | `marker` (default `NOT IN SOURCE`), `forbidden` | Unanswerable questions |
-| `python_function` | `function`, `tests: [{args, expected} or {args, raises}]` | Code-writing tasks |
-
-Other case keys: `generator` (instead of `messages`; see `llm_eval/generators.py`),
-`profile: long`, `min_ctx`, `cutoff: fail`, `tags`, `notes`. A file may set `defaults`
-merged into each case, and `shared` for YAML anchors (see `grounded_qa.yaml`). Scenario
-files are validated on load: unknown keys, missing grader fields, bad regexes, and
-duplicate IDs are reported before anything runs.
-
-Long inputs are generated rather than written out. A generator is a Python function in
-`llm_eval/generators.py`, seeded from `--seed` and the case ID, so prompts are
-byte-identical across runs with the same seed. Programmatic generation is used only
-where hand-written YAML would be impractically long.
+Python assertions take a `config`, e.g.
+`{type: python, value: file://helpers/assertions.py:number, config: {expected: 2080}}`.
+Available: `exact`, `number`, `choice`, `regex_extract`, `abstain`,
+`python_function`, `long_context_answer`; see their docstrings for config keys.
+Long-context tests name a generator in `vars` (see `scenarios/long_context.yaml`).
 
 ## Running model-generated code
 
-`python_function` cases execute code written by the model, with layered safeguards
-(`llm_eval/sandbox.py`):
+`python_function` assertions run code written by the model, through layered
+safeguards in `helpers/sandbox.py`:
 
-- The code is parsed first: only pure standard-library modules (`math`, `re`,
-  `collections`, ...) may be imported, and `open`, `eval`, `exec`, `__import__`,
-  `getattr` and dunder attributes are rejected. Rejected code is graded `review`,
-  never run.
-- It runs in a separate `python -I` process in a temporary directory, with an empty
-  environment and stdin closed.
-- Limits apply: CPU time, 1 GiB address space, 1 MiB file size, 64 open files, no new
-  processes, and a wall-clock timeout.
-- When `unshare -rn` works (stock Fedora), the process has no network interfaces.
+1. **Static policy.** The code is parsed first. Only pure standard-library modules may
+   be imported, and file, eval, and introspection builtins and dunder attributes are
+   rejected. Rejected code is graded `REVIEW:`, never run.
+2. **Separate process.** It runs in a `python -I` process in a temporary directory,
+   with an empty environment.
+3. **Resource limits.** CPU, 1 GiB memory, file size, open files, no new processes,
+   and a wall-clock timeout.
+4. **No network.** It runs under `unshare -rn`, which works on stock Fedora, and has no
+   network interfaces. If that isn't available, the sandbox **fails closed**: the code
+   isn't run, and the test is reported as an error.
 
-This is defense in depth for a personal machine, not a hardened sandbox against
-adversarial code.
+Verified here: inside the sandbox, `fork`, network connections and a 2 GiB allocation
+all fail.
+
+**Trust boundary.** This protects a personal machine against accidental damage or
+casual misuse by the model under test. It is not a hardened sandbox:
+- There's no filesystem isolation. The process can read anything your user can, if the
+  code gets past the static check.
+- The static check is a denylist and can have gaps.
+- It depends on the host kernel and Python.
+
+Don't use it to run deliberately adversarial code.
 
 ## Limitations
 
-- **This is not a measure of general model intelligence.** 41 hand-written cases cover
-  a few practical capabilities. Use established public benchmarks for broad model
+- **This is not a measure of general model intelligence.** 41 hand-written tests cover
+  a few practical capabilities. Use established public benchmarks for broad
   comparisons.
 - **Passing does not mean a chatbot has persistent memory, effective document
   retrieval, or reliable cross-session behavior.** All history and documents are
-  supplied in one request; nothing is stored or retrieved.
-- Small case counts mean one case changes a category's rate a lot. Look at which cases
-  changed (`compare --cases`), not only percentages.
-- At temperature 0 with a fixed seed, results are reproducible on the same
-  model/server/hardware, but a different Ollama version, GPU, or quantization can
-  change outputs.
-- Token estimates in case descriptions (e.g. "~5k tokens") are for Qwen-family
-  tokenizers; other models tokenize differently. The actual count is in each record.
-- Truncation detection relies on Ollama honoring `truncate: false` (verified with Ollama
-  0.40.3) plus a heuristic. `prompt_eval_count` alone cannot prove a prompt was complete.
-- GPU metrics are limited to Ollama's own `/api/ps` memory report; there is no GPU
-  profiling.
-- Graders accept limited formatting variation (case, surrounding whitespace, a final
-  period, a code fence). A model that answers correctly but ignores an explicit format
-  instruction can fail or land in `review`. That is intended, but keep it in mind when
-  comparing models with different styles.
-
-## Repository layout
-
-```
-llm_eval/            evaluation suite
-  cli.py             command line, run metadata, result files
-  ollama.py          Ollama HTTP client, error classification, timing metrics
-  scenarios.py       scenario loading, validation, selection
-  generators.py      deterministic long-input generators
-  graders.py         deterministic graders
-  sandbox.py         restricted execution of model-written functions
-  runner.py          runs cases, decides pass/fail/invalid
-  report.py          summaries, console output, exit status
-  compare.py         side-by-side comparison of stored runs
-scenarios/           test cases, one YAML file per category
-tests/               tests of the suite itself (mocked Ollama; no server needed)
-experiments/         standalone experiments
-results/             run output (git-ignored)
-```
-
-Run the suite's own tests with `uv run pytest`.
+  supplied in one request.
+- Small case counts mean one test moves a category's rate a lot. Look at which tests
+  changed, not only percentages.
+- At temperature 0 with a fixed seed, results reproduce on the same
+  model/server/hardware. A different Ollama version, GPU, or quantization can change
+  outputs.
+- Token estimates in test purposes are for Qwen-family tokenizers. The actual count is
+  in each result.
+- Overflow detection relies on Ollama honoring `truncate: false` (verified with 0.40.3).
+  The backup check for servers that ignore it is a heuristic: it catches gross
+  truncation, but a plausible token count doesn't prove the prompt was complete.
+- promptfoo has only pass/fail/error. "Review" and "invalid" are encoded in reason and
+  error text and separated again by `helpers/summary.py`.
+- GPU metrics are limited to what Ollama reports; there is no GPU profiling.
 
 ## Experiments
 
-- [001 — Context Recall](experiments/001_context_recall/)
+- [001 — Context Recall](experiments/001_context_recall/) (concluded; superseded by the `long_context` tests)

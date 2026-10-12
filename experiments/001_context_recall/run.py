@@ -5,7 +5,7 @@ No third-party Python packages, Open WebUI, or Internet access required.
 Usage: uv run python experiments/001_context_recall/run.py [--ctx 16384] [--notes 90]
 
 The reusable version of this test lives in the evaluation suite (long_context category,
-llm_eval/generators.py); this script is kept as the original, self-contained experiment.
+helpers/long_context.py); this script is kept as the original, self-contained experiment.
 """
 
 import argparse

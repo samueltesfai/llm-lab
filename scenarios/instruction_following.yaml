@@ -1,17 +1,13 @@
-category: instruction_following
-description: >
-  Explicit, machine-checkable output constraints. JSON answers are parsed and
-  validated against a JSON Schema; format rules are checked by the `constraints`
-  grader. A code fence around otherwise valid JSON is tolerated.
+# instruction_following: explicit, machine-checkable output constraints.
+# JSON answers must be bare JSON (is-json parses the whole output) and satisfy a
+# JSON Schema; values and format rules are checked by small JavaScript assertions.
 
-defaults:
-  options: {num_predict: 400}
-
-cases:
-  - id: if_json_incident_schema
-    purpose: >
-      Extract an incident report into JSON that satisfies a strict schema (exact keys,
-      enum, integer and boolean types) with correct values.
+- description: if_json_incident_schema
+  metadata:
+    category: instruction_following
+    purpose: Extract an incident report into JSON that satisfies a strict schema (exact keys, enum, integer and boolean types) with correct values.
+    num_predict: 400
+  vars:
     messages:
       - role: user
         content: |
@@ -29,33 +25,32 @@ cases:
           - customer_impact (boolean)
           - duration_minutes (integer)
           Do not add any other fields.
-    grader:
-      type: json
-      schema:
+  assert:
+    - type: is-json
+      value:
         type: object
         additionalProperties: false
         required: [incident_id, severity, affected_services, customer_impact, duration_minutes]
         properties:
           incident_id: {type: string, pattern: '^INC-\d+$'}
           severity: {enum: [low, medium, high, critical]}
-          affected_services:
-            type: array
-            minItems: 2
-            maxItems: 2
-            items: {type: string, pattern: '^[^A-Z]+$'}
+          affected_services: {type: array, minItems: 2, maxItems: 2, items: {type: string, pattern: '^[^A-Z]+$'}}
           customer_impact: {type: boolean}
           duration_minutes: {type: integer}
-      expect:
-        incident_id: INC-4471
-        severity: high
-        customer_impact: true
-        duration_minutes: 38
-      forbidden_text: ['search']
+    - type: javascript
+      value: |
+        const d = JSON.parse(output);
+        return d.incident_id === 'INC-4471' && d.severity === 'high'
+          && d.customer_impact === true && d.duration_minutes === 38;
+    - type: not-icontains
+      value: search
 
-  - id: if_json_forbidden_fields
-    purpose: >
-      Produce a JSON record while honoring a prohibition: contact details present in
-      the source must be left out of every field.
+- description: if_json_forbidden_fields
+  metadata:
+    category: instruction_following
+    purpose: Produce a JSON record while honoring a prohibition; contact details present in the source must be left out of every field.
+    num_predict: 400
+  vars:
     messages:
       - role: user
         content: |
@@ -70,9 +65,9 @@ cases:
           - Do NOT include contact details: no email address and no phone number, under any key.
           - No keys other than the five required ones.
           Return only the JSON object.
-    grader:
-      type: json
-      schema:
+  assert:
+    - type: is-json
+      value:
         type: object
         additionalProperties: false
         required: [name, title, team, office, start_date]
@@ -82,17 +77,20 @@ cases:
           team: {type: string}
           office: {type: string}
           start_date: {type: string, pattern: '^\d{4}-\d{2}-\d{2}$'}
-      expect:
-        title: Staff Engineer
-        team: Platform
-        office: Lisbon
-        start_date: "2024-03-11"
-      forbidden_text: ['@', '555', '0142']
+    - type: javascript
+      value: |
+        const d = JSON.parse(output);
+        return d.title.toLowerCase() === 'staff engineer' && d.team.toLowerCase() === 'platform'
+          && d.office.toLowerCase() === 'lisbon' && d.start_date === '2024-03-11';
+    - type: not-contains-any
+      value: ['@', '555', '0142']
 
-  - id: if_json_filter_sort
-    purpose: >
-      Filter and sort data into an exact JSON array. Comparing major versions
-      numerically is the trap: "23" counts as >= 3.
+- description: if_json_filter_sort
+  metadata:
+    category: instruction_following
+    purpose: Filter and sort data into an exact JSON array. Comparing major versions numerically is the trap, since "23" counts as >= 3.
+    num_predict: 400
+  vars:
     messages:
       - role: user
         content: |
@@ -108,27 +106,26 @@ cases:
           number before the first dot) is 3 or greater, sorted alphabetically by name.
           Each element must be an object {"name": ..., "version": ...} with the version
           as a string. Return only the JSON array.
-    grader:
-      type: json
-      schema:
+  assert:
+    - type: is-json
+      value:
         type: array
         items:
           type: object
           additionalProperties: false
           required: [name, version]
-          properties:
-            name: {type: string}
-            version: {type: string}
-      expect:
-        $:
-          - {name: attrs, version: 23.2.0}
-          - {name: flask, version: 3.0.3}
-          - {name: pytest, version: 8.2.1}
+          properties: {name: {type: string}, version: {type: string}}
+    - type: javascript
+      value: >-
+        JSON.parse(output).map(p => `${p.name}@${p.version}`).join(',')
+        === 'attrs@23.2.0,flask@3.0.3,pytest@8.2.1'
 
-  - id: if_bullets_multi_constraint
-    purpose: >
-      Satisfy four simultaneous format and content rules: line count, bullet syntax,
-      a per-line word limit, and a forbidden word.
+- description: if_bullets_multi_constraint
+  metadata:
+    category: instruction_following
+    purpose: Satisfy four simultaneous rules - line count, bullet syntax, a per-line word limit, and a forbidden word.
+    num_predict: 400
+  vars:
     messages:
       - role: user
         content: |
@@ -139,18 +136,22 @@ cases:
           2. Each bullet has at most 12 words, not counting the dash.
           3. Do not use the word "cloud" anywhere.
           4. No title, introduction, or closing sentence.
-    grader:
-      type: constraints
-      checks:
-        - line_count: {eq: 3}
-        - each_line_matches: '^- \S'
-        - each_line_max_words: 13      # 12 words plus the "-" token
-        - not_contains: 'cloud'
+  assert:
+    - type: javascript
+      value: |
+        const lines = output.trim().split('\n').filter(l => l.trim());
+        if (lines.length !== 3) return {pass: false, score: 0, reason: `${lines.length} lines, expected 3`};
+        const bad = lines.filter(l => !/^- \S/.test(l) || l.trim().split(/\s+/).length > 13);
+        return bad.length ? {pass: false, score: 0, reason: `bad bullet: ${bad[0]}`} : true;
+    - type: not-icontains
+      value: cloud
 
-  - id: if_status_line_exact
-    purpose: >
-      Apply stated rules to data and return one line in a precisely specified
-      key=value format.
+- description: if_status_line_exact
+  metadata:
+    category: instruction_following
+    purpose: Apply stated rules to data and return one line in a precisely specified key=value format.
+    num_predict: 400
+  vars:
     messages:
       - role: user
         content: |
@@ -166,15 +167,16 @@ cases:
 
           Respond with exactly one line in this format and nothing else:
           STATUS=<status>; SERVICES=<number of services>; SLOWEST=<service name>
-    grader:
-      type: exact
-      case_sensitive: true
-      expected: "STATUS=DEGRADED; SERVICES=4; SLOWEST=worker"
+  assert:
+    - type: equals
+      value: "STATUS=DEGRADED; SERVICES=4; SLOWEST=worker"
 
-  - id: if_csv_sorted_exact
-    purpose: >
-      Emit exact CSV with a prescribed header, normalized item names, and a two-key
-      sort order (quantity descending, then name for ties).
+- description: if_csv_sorted_exact
+  metadata:
+    category: instruction_following
+    purpose: Emit exact CSV with a prescribed header, normalized item names, and a two-key sort order (quantity descending, then name for ties).
+    num_predict: 400
+  vars:
     messages:
       - role: user
         content: |
@@ -184,9 +186,9 @@ cases:
           quantity descending; break ties alphabetically by item name. Use these item
           names exactly: mug, pencil, stapler, notebook. No spaces, no code fences, and
           no other text.
-    grader:
-      type: exact
-      expected: |-
+  assert:
+    - type: equals
+      value: |-
         item,quantity
         notebook,30
         pencil,30
