@@ -104,6 +104,14 @@ class TestAbstain:
         spec = {"type": "abstain", "forbidden": [r"\d+\s*liters"]}
         assert grade("NOT IN SOURCE, but probably 500 liters", spec).status == "fail"
 
+    def test_marker_with_normalization(self):
+        assert g("not in source.", type="abstain").status == "pass"
+        assert g("`NOT IN SOURCE`", type="abstain").status == "pass"
+
+    def test_marker_plus_claim_is_not_a_pass(self):
+        result = g("NOT IN SOURCE. The operations manager is Alice.", type="abstain")
+        assert result.status == "review" and "unsupported claims" in result.detail
+
     def test_abstention_phrase_without_marker_is_review(self):
         assert g("The document does not specify this.", type="abstain").status == "review"
 

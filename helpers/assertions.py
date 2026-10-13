@@ -153,19 +153,26 @@ DEFAULT_ABSTENTION_PHRASES = [
 
 
 def grade_abstain(answer: str, spec: dict) -> GradeResult:
-    """For unanswerable questions: the model must give the agreed marker and invent nothing.
+    """For unanswerable questions: the answer must be exactly the agreed marker.
 
-      marker present, no forbidden detail      -> pass
-      forbidden (invented) detail present      -> fail, with or without the marker
-      no marker, but an abstention phrase      -> review (right idea, wrong format)
-      otherwise                                -> fail (answered something unsupported)
+      exactly the marker (case, whitespace, quotes, final period ignored)  -> pass
+      forbidden (invented) detail present, with or without the marker     -> fail
+      the marker plus other text                                          -> review
+      no marker, but an abstention phrase                                 -> review
+      otherwise                                                           -> fail
+
+    Extra text next to the marker is review, not pass: a rule can't tell a harmless
+    explanation ("the document doesn't name a manager") from a hallucinated claim
+    ("the manager is Alice"). `forbidden` patterns catch the predictable inventions.
     """
     marker = spec.get("marker", "NOT IN SOURCE")
     for pattern in spec.get("forbidden", []):
         if re.search(pattern, answer, re.IGNORECASE):
             return GradeResult("fail", f"unsupported detail /{pattern}/ in answer")
-    if marker.casefold() in answer.casefold():
+    if normalize_short(answer) == marker.casefold():
         return GradeResult("pass")
+    if marker.casefold() in answer.casefold():
+        return GradeResult("review", f"gave {marker!r} but added other text; check it for unsupported claims")
     phrases = spec.get("abstention_phrases", DEFAULT_ABSTENTION_PHRASES)
     if any(re.search(p, answer, re.IGNORECASE) for p in phrases):
         return GradeResult("review", f"abstained without the required marker {marker!r}")

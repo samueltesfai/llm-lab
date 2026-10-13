@@ -42,6 +42,10 @@
         const d = JSON.parse(output);
         return d.incident_id === 'INC-4471' && d.severity === 'high'
           && d.customer_impact === true && d.duration_minutes === 38;
+    - type: javascript   # the schema requires exactly two; naming varies (payments-api, payments api)
+      value: |
+        const s = JSON.parse(output).affected_services;
+        return s.some(x => x.includes('payment')) && s.some(x => x.includes('checkout'));
     - type: not-icontains
       value: search
 
@@ -80,8 +84,9 @@
     - type: javascript
       value: |
         const d = JSON.parse(output);
-        return d.title.toLowerCase() === 'staff engineer' && d.team.toLowerCase() === 'platform'
-          && d.office.toLowerCase() === 'lisbon' && d.start_date === '2024-03-11';
+        return /amara okafor/i.test(d.name) && d.title.toLowerCase() === 'staff engineer'
+          && d.team.toLowerCase() === 'platform' && d.office.toLowerCase() === 'lisbon'
+          && d.start_date === '2024-03-11';
     - type: not-contains-any
       value: ['@', '555', '0142']
 
