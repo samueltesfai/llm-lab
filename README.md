@@ -19,9 +19,10 @@ The hardware isn't fixed here, because each run records its own (see [Results](#
 1. **Model-level evaluation** (this repository's evaluation suite): how capable,
    reliable, and fast is a model when given *controlled* inputs directly through the
    Ollama API? Every test sends a complete, fixed prompt in a single request.
-2. **Application-level evaluation** (future work, not implemented here): how well does
+2. **Application-level evaluation** (planned, not implemented yet): how well does
    an actual chatbot (e.g. Open WebUI) manage history, retrieval, persistent memory,
-   and the overall user experience?
+   and the overall user experience? See
+   [docs/openwebui-integration-eval-design.md](docs/openwebui-integration-eval-design.md).
 
 The suite establishes a model-level baseline that helps distinguish model limitations
 from application-level behavior when investigating failures in the complete chatbot.
@@ -41,6 +42,7 @@ helpers/                 Python only where promptfoo has no built-in equivalent
   sandbox.py             restricted execution of model-written code
   summary.py             per-category console summary, timings, exit status
 tests/                   tests of the helpers (mocked Ollama; no server needed)
+docs/                    design notes for planned work
 experiments/             standalone experiments
 results/                 run reports (git-ignored, except baseline/ and 001_context_recall/)
 ```
